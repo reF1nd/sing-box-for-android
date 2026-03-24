@@ -68,7 +68,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.nekohasekai.sfa"
+        applicationId = "io.reF1nd.sfa"
         minSdk = 21
         targetSdk = 37
         versionCode = getVersionProps("VERSION_CODE").toInt()
