@@ -8,6 +8,6 @@
         <intent
             android:action="android.intent.action.MAIN"
             android:targetClass="io.nekohasekai.sfa.ui.ShortcutToggleActivity"
-            android:targetPackage="io.nekohasekai.sfa" />
+            android:targetPackage="io.reF1nd.sfa" />
     </shortcut>
 </shortcuts>
