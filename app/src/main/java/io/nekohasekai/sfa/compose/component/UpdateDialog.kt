@@ -46,6 +46,7 @@ fun UpdateAvailableDialog(updateInfo: UpdateInfo, onDismiss: () -> Unit, onUpdat
                 if (!updateInfo.releaseNotes.isNullOrBlank()) {
                     val processedNotes = remember(updateInfo.releaseNotes) {
                         emojiCatalog.replaceShortcodes(updateInfo.releaseNotes)
+                            .replace("`", "")
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     MarkdownText(
