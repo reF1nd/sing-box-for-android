@@ -95,8 +95,8 @@ fun OOMReportDetailScreen(navController: NavController, reportId: String) {
 
     LaunchedEffect(report) {
         if (report != null) {
-            withContext(Dispatchers.IO) {
-                files = OOMReportManager.availableFiles(report)
+            files = withContext(Dispatchers.IO) {
+                OOMReportManager.availableFiles(report)
             }
             OOMReportManager.markAsRead(report)
         }
@@ -288,8 +288,8 @@ fun OOMReportMetadataScreen(navController: NavController, reportId: String) {
 
     LaunchedEffect(report) {
         if (report != null) {
-            withContext(Dispatchers.IO) {
-                entries = loadOOMMetadataEntries(report)
+            entries = withContext(Dispatchers.IO) {
+                loadOOMMetadataEntries(report)
             }
         }
         isLoading = false
@@ -397,12 +397,13 @@ fun OOMReportFileContentScreen(navController: NavController, reportId: String, f
 
     LaunchedEffect(report, kind) {
         if (report != null && kind != null) {
-            withContext(Dispatchers.IO) {
+            val loadedFile = withContext(Dispatchers.IO) {
                 val file = OOMReportManager.availableFiles(report).find { it.kind == kind }
-                if (file != null) {
-                    displayName = file.displayName
-                    content = OOMReportManager.loadFileContent(file)
-                }
+                file?.let { it.displayName to OOMReportManager.loadFileContent(it) }
+            }
+            if (loadedFile != null) {
+                displayName = loadedFile.first
+                content = loadedFile.second
             }
         }
         isLoading = false

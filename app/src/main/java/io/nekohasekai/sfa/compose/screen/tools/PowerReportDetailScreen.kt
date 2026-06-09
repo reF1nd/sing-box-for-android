@@ -94,8 +94,8 @@ fun PowerReportDetailScreen(navController: NavController, reportId: String) {
 
     LaunchedEffect(report) {
         if (report != null) {
-            withContext(Dispatchers.IO) {
-                files = PowerReportManager.availableFiles(report)
+            files = withContext(Dispatchers.IO) {
+                PowerReportManager.availableFiles(report)
             }
             PowerReportManager.markAsRead(report)
         }
@@ -287,8 +287,8 @@ fun PowerReportMetadataScreen(navController: NavController, reportId: String) {
 
     LaunchedEffect(report) {
         if (report != null) {
-            withContext(Dispatchers.IO) {
-                entries = loadPowerMetadataEntries(report)
+            entries = withContext(Dispatchers.IO) {
+                loadPowerMetadataEntries(report)
             }
         }
         isLoading = false
@@ -396,12 +396,13 @@ fun PowerReportFileContentScreen(navController: NavController, reportId: String,
 
     LaunchedEffect(report, kind) {
         if (report != null && kind != null) {
-            withContext(Dispatchers.IO) {
+            val loadedFile = withContext(Dispatchers.IO) {
                 val file = PowerReportManager.availableFiles(report).find { it.kind == kind }
-                if (file != null) {
-                    displayName = file.displayName
-                    content = PowerReportManager.loadFileContent(file)
-                }
+                file?.let { it.displayName to PowerReportManager.loadFileContent(it) }
+            }
+            if (loadedFile != null) {
+                displayName = loadedFile.first
+                content = loadedFile.second
             }
         }
         isLoading = false
