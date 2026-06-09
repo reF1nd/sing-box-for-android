@@ -8,7 +8,9 @@ import java.net.NetworkInterface
 
 object DefaultNetworkMonitor {
 
+    @Volatile
     var defaultNetwork: Network? = null
+    @Volatile
     private var listener: InterfaceUpdateListener? = null
 
     suspend fun start() {
@@ -25,6 +27,8 @@ object DefaultNetworkMonitor {
 
     suspend fun stop() {
         DefaultNetworkListener.stop(this)
+        defaultNetwork = null
+        listener = null
     }
 
     suspend fun require(): Network {

@@ -163,9 +163,9 @@ class DashboardViewModel :
                 )
             }.distinctUntilChanged().collect { target ->
                 if (target.connect) {
-                    commandClient.connect()
+                    connectCommandClient()
                 } else {
-                    commandClient.disconnect()
+                    disconnectCommandClient()
                 }
             }
         }
@@ -464,6 +464,9 @@ class DashboardViewModel :
                 if (isRemote) {
                     return
                 }
+                if (AppLifecycleObserver.isForeground.value) {
+                    connectCommandClient()
+                }
                 reloadSystemProxyStatus()
                 reloadStartedAt()
             }
@@ -472,6 +475,7 @@ class DashboardViewModel :
                 if (isRemote) {
                     return
                 }
+                disconnectCommandClient()
                 updateState {
                     copy(
                         hasGroups = false,
@@ -496,6 +500,18 @@ class DashboardViewModel :
             }
 
             else -> {}
+        }
+    }
+
+    private fun connectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    private fun disconnectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
         }
     }
 

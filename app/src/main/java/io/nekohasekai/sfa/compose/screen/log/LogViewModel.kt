@@ -49,9 +49,9 @@ class LogViewModel :
                 )
             }.distinctUntilChanged().collect { target ->
                 if (target.connect) {
-                    commandClient.connect()
+                    connectCommandClient()
                 } else {
-                    commandClient.disconnect()
+                    disconnectCommandClient()
                 }
             }
         }
@@ -77,7 +77,14 @@ class LogViewModel :
             return
         }
         when (status) {
+            Status.Started -> {
+                if (AppLifecycleObserver.isForeground.value) {
+                    connectCommandClient()
+                }
+            }
+
             Status.Stopped, Status.Stopping -> {
+                disconnectCommandClient()
                 _uiState.update { it.copy(isConnected = false) }
             }
 
@@ -87,6 +94,18 @@ class LogViewModel :
 
     override fun onConnected() {
         _uiState.update { it.copy(isConnected = true) }
+    }
+
+    private fun connectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    private fun disconnectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
+        }
     }
 
     override fun onDisconnected() {
