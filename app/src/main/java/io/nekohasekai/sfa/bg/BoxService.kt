@@ -275,12 +275,19 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         serviceReload()
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
     @RequiresApi(Build.VERSION_CODES.M)
     private fun serviceUpdateIdleMode() {
-        if (Application.powerManager.isDeviceIdleMode) {
-            commandServer.pause()
-        } else {
-            commandServer.wake()
+        val isDeviceIdleMode = Application.powerManager.isDeviceIdleMode
+        if (!::commandServer.isInitialized) {
+            return
+        }
+        GlobalScope.launch(Dispatchers.IO) {
+            if (isDeviceIdleMode) {
+                commandServer.pause()
+            } else {
+                commandServer.wake()
+            }
         }
     }
 

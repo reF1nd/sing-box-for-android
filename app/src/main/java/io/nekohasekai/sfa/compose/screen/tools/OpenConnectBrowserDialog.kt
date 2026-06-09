@@ -42,6 +42,10 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import io.nekohasekai.sfa.R
 import java.util.UUID
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -126,6 +130,15 @@ private class OpenConnectWebViewBrowser(
         private const val COOKIE_POLL_DELAY_MILLIS = 100L
         private const val MAXIMUM_WEB_VIEW_COUNT = 8
         private const val MAXIMUM_OBSERVED_URL_COUNT = 128
+
+        @OptIn(DelicateCoroutinesApi::class)
+        private fun flushCookies(cookieManager: CookieManager) {
+            GlobalScope.launch(Dispatchers.IO) {
+                runCatching {
+                    cookieManager.flush()
+                }
+            }
+        }
     }
 
     private var container: FrameLayout? = null
@@ -337,7 +350,7 @@ private class OpenConnectWebViewBrowser(
         }
         rootWebView = null
         container = null
-        cookieManager?.flush()
+        cookieManager?.let(::flushCookies)
         cookieManager = null
     }
 
@@ -370,7 +383,7 @@ private class OpenConnectWebViewBrowser(
                 if (state == State.ACTIVE && rootWebView === view && navigationStates.containsKey(view)) {
                     remainingRequests--
                     if (remainingRequests == 0) {
-                        cookieManager.flush()
+                        flushCookies(cookieManager)
                         activate(view)
                     }
                 }

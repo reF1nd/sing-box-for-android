@@ -7,7 +7,9 @@ import io.nekohasekai.libbox.OpenConnectStatusSubscription
 import io.nekohasekai.libbox.OpenConnectStatusUpdate
 import io.nekohasekai.sfa.compose.base.BaseViewModel
 import io.nekohasekai.sfa.utils.CommandTarget
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -116,10 +118,13 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
 
     private var subscription: OpenConnectStatusSubscription? = null
 
+    private var subscriptionGeneration = 0L
+
     override fun createInitialState() = OpenConnectStatusState()
 
     fun subscribe() {
         if (currentState.isSubscribed) return
+        val generation = ++subscriptionGeneration
         updateState { copy(isSubscribed = true) }
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -128,6 +133,7 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
                 val apiVersion = client.getAPIVersion()
                 if (apiVersion < MIN_API_VERSION_OPENCONNECT) {
                     viewModelScope.launch {
+                        if (!isCurrentSubscription(generation)) return@launch
                         updateState { copy(endpoints = emptyList(), isSubscribed = false) }
                         subscription = null
                     }
@@ -139,14 +145,14 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
                             override fun onStatusUpdate(status: OpenConnectStatusUpdate) {
                                 val endpoints = convertUpdate(status)
                                 viewModelScope.launch {
-                                    if (!currentState.isSubscribed) return@launch
+                                    if (!isCurrentSubscription(generation)) return@launch
                                     updateState { copy(endpoints = endpoints) }
                                 }
                             }
 
                             override fun onError(message: String) {
                                 viewModelScope.launch {
-                                    if (!currentState.isSubscribed) return@launch
+                                    if (!isCurrentSubscription(generation)) return@launch
                                     updateState { copy(endpoints = emptyList(), isSubscribed = false) }
                                     subscription = null
                                     sendErrorMessage(message)
@@ -156,6 +162,7 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
                     )
             } catch (_: Exception) {
                 viewModelScope.launch {
+                    if (!isCurrentSubscription(generation)) return@launch
                     updateState { copy(endpoints = emptyList(), isSubscribed = false) }
                     subscription = null
                 }
@@ -163,12 +170,24 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
         }
     }
 
-    fun cancel() {
-        try {
-            subscription?.close()
-        } catch (_: Exception) {
-        }
+    private fun isCurrentSubscription(generation: Long): Boolean {
+        return subscriptionGeneration == generation && currentState.isSubscribed
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun closeSubscription() {
+        val currentSubscription = subscription ?: return
         subscription = null
+        GlobalScope.launch(Dispatchers.IO) {
+            runCatching {
+                currentSubscription.close()
+            }
+        }
+    }
+
+    fun cancel() {
+        subscriptionGeneration++
+        closeSubscription()
         updateState { copy(endpoints = emptyList(), isSubscribed = false) }
     }
 
