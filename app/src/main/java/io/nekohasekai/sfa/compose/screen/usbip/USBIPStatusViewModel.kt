@@ -7,8 +7,16 @@ import io.nekohasekai.libbox.USBIPServerStatusSubscription
 import io.nekohasekai.libbox.USBIPServerStatusUpdate
 import io.nekohasekai.libbox.USBSharedDevice
 import io.nekohasekai.sfa.compose.base.BaseViewModel
+import io.nekohasekai.sfa.constant.Status
+import io.nekohasekai.sfa.utils.AppLifecycleObserver
 import io.nekohasekai.sfa.utils.CommandTarget
+import io.nekohasekai.sfa.utils.RemoteControlManager
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 data class UsbSharedInterfaceData(
@@ -56,12 +64,48 @@ class USBIPStatusViewModel : BaseViewModel<USBIPStatusState, Nothing>() {
         private const val MIN_API_VERSION_USBIP = 2
     }
 
+    @Volatile
     private var subscription: USBIPServerStatusSubscription? = null
+
+    @Volatile
+    private var subscriptionGeneration = 0L
+
+    private val routeActiveFlow = MutableStateFlow(false)
+    private val serviceStatusFlow = MutableStateFlow(Status.Stopped)
 
     override fun createInitialState() = USBIPStatusState()
 
+    init {
+        viewModelScope.launch {
+            combine(
+                AppLifecycleObserver.isForeground,
+                RemoteControlManager.remoteServer,
+                routeActiveFlow,
+                serviceStatusFlow,
+            ) { foreground, remoteServer, routeActive, status ->
+                SubscriptionTarget(
+                    active = foreground && routeActive && (remoteServer != null || status == Status.Started),
+                    remoteServerId = remoteServer?.id,
+                )
+            }.distinctUntilChanged().collect { target ->
+                cancel()
+                if (target.active) {
+                    subscribe()
+                }
+            }
+        }
+    }
+
+    private data class SubscriptionTarget(val active: Boolean, val remoteServerId: Long?)
+
+    fun updateRouteState(active: Boolean, status: Status) {
+        routeActiveFlow.value = active
+        serviceStatusFlow.value = status
+    }
+
     fun subscribe() {
         if (currentState.isSubscribed) return
+        val generation = ++subscriptionGeneration
         updateState { copy(isSubscribed = true) }
 
         viewModelScope.launch(Dispatchers.IO) {
@@ -69,25 +113,26 @@ class USBIPStatusViewModel : BaseViewModel<USBIPStatusState, Nothing>() {
                 val client = CommandTarget.standaloneClient()
                 if (client.getAPIVersion() < MIN_API_VERSION_USBIP) {
                     viewModelScope.launch {
+                        if (!isCurrentSubscription(generation)) return@launch
                         updateState { copy(servers = emptyList(), isSubscribed = false) }
                         subscription = null
                     }
                     return@launch
                 }
-                subscription =
+                val newSubscription =
                     client.subscribeUSBIPServerStatus(
                         object : USBIPServerStatusHandler {
                             override fun onStatusUpdate(status: USBIPServerStatusUpdate) {
                                 val servers = convertUpdate(status)
                                 viewModelScope.launch {
-                                    if (!currentState.isSubscribed) return@launch
+                                    if (!isCurrentSubscription(generation)) return@launch
                                     updateState { copy(servers = servers) }
                                 }
                             }
 
                             override fun onError(message: String) {
                                 viewModelScope.launch {
-                                    if (!currentState.isSubscribed) return@launch
+                                    if (!isCurrentSubscription(generation)) return@launch
                                     updateState { copy(servers = emptyList(), isSubscribed = false) }
                                     subscription = null
                                     sendErrorMessage(message)
@@ -95,8 +140,10 @@ class USBIPStatusViewModel : BaseViewModel<USBIPStatusState, Nothing>() {
                             }
                         },
                     )
+                setCurrentSubscription(generation, newSubscription)
             } catch (_: Exception) {
                 viewModelScope.launch {
+                    if (!isCurrentSubscription(generation)) return@launch
                     updateState { copy(servers = emptyList(), isSubscribed = false) }
                     subscription = null
                 }
@@ -104,12 +151,45 @@ class USBIPStatusViewModel : BaseViewModel<USBIPStatusState, Nothing>() {
         }
     }
 
-    fun cancel() {
-        try {
-            subscription?.close()
-        } catch (_: Exception) {
+    private fun isCurrentSubscription(generation: Long): Boolean {
+        return subscriptionGeneration == generation && currentState.isSubscribed
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun closeSubscription(currentSubscription: USBIPServerStatusSubscription) {
+        GlobalScope.launch(Dispatchers.IO) {
+            runCatching {
+                currentSubscription.close()
+            }
         }
+    }
+
+    private fun closeSubscription() {
+        val currentSubscription = subscription ?: return
         subscription = null
+        closeSubscription(currentSubscription)
+    }
+
+    private fun setCurrentSubscription(
+        generation: Long,
+        newSubscription: USBIPServerStatusSubscription,
+    ) {
+        if (!isCurrentSubscription(generation)) {
+            closeSubscription(newSubscription)
+            return
+        }
+        subscription = newSubscription
+        if (!isCurrentSubscription(generation)) {
+            if (subscription === newSubscription) {
+                subscription = null
+            }
+            closeSubscription(newSubscription)
+        }
+    }
+
+    fun cancel() {
+        subscriptionGeneration++
+        closeSubscription()
         updateState { copy(servers = emptyList(), isSubscribed = false) }
     }
 

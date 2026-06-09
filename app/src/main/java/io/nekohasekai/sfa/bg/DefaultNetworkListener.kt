@@ -158,6 +158,7 @@ object DefaultNetworkListener {
         }
     }
 
+    @Volatile
     private var fallback = false
     private val request =
         NetworkRequest.Builder().apply {

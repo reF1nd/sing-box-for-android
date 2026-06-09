@@ -92,15 +92,18 @@ class TailscaleStatusViewModel : BaseViewModel<TailscaleStatusState, Nothing>() 
                         override fun onStatusUpdate(status: TailscaleStatusUpdate) {
                             val endpoints = convertUpdate(status)
                             viewModelScope.launch {
-                                if (!currentState.isSubscribed) return@launch
+                                if (!statusSubscription.isCurrent(token) ||
+                                    !currentState.isSubscribed
+                                ) {
+                                    return@launch
+                                }
                                 updateState { copy(endpoints = endpoints, hasUpdate = true) }
                             }
                         }
 
                         override fun onError(message: String) {
-                            statusSubscription.discard(token)
                             viewModelScope.launch {
-                                if (!currentState.isSubscribed) return@launch
+                                if (!statusSubscription.discard(token)) return@launch
                                 updateState { copy(endpoints = emptyList(), isSubscribed = false, hasUpdate = false) }
                                 sendErrorMessage(message)
                             }
@@ -109,6 +112,7 @@ class TailscaleStatusViewModel : BaseViewModel<TailscaleStatusState, Nothing>() 
                 statusSubscription.store(token, session)
             } catch (_: Exception) {
                 viewModelScope.launch {
+                    if (!statusSubscription.discard(token)) return@launch
                     updateState { copy(endpoints = emptyList(), isSubscribed = false, hasUpdate = false) }
                 }
             }

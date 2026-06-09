@@ -95,8 +95,8 @@ fun CrashReportDetailScreen(navController: NavController, reportId: String) {
 
     LaunchedEffect(report) {
         if (report != null) {
-            withContext(Dispatchers.IO) {
-                files = CrashReportManager.availableFiles(report)
+            files = withContext(Dispatchers.IO) {
+                CrashReportManager.availableFiles(report)
             }
             CrashReportManager.markAsRead(report)
         }
@@ -281,8 +281,8 @@ fun CrashReportMetadataScreen(navController: NavController, reportId: String) {
 
     LaunchedEffect(report) {
         if (report != null) {
-            withContext(Dispatchers.IO) {
-                entries = loadMetadataEntries(report)
+            entries = withContext(Dispatchers.IO) {
+                loadMetadataEntries(report)
             }
         }
         isLoading = false
@@ -405,9 +405,9 @@ fun CrashReportFileContentScreen(navController: NavController, reportId: String,
 
     LaunchedEffect(report, kind) {
         if (report != null && kind != null) {
-            withContext(Dispatchers.IO) {
+            content = withContext(Dispatchers.IO) {
                 val file = CrashReportManager.availableFiles(report).find { it.kind == kind }
-                content = if (file != null) CrashReportManager.loadFileContent(file) else ""
+                if (file != null) CrashReportManager.loadFileContent(file) else ""
             }
         }
         isLoading = false

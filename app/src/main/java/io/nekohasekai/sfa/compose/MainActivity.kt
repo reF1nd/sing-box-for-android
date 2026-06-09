@@ -825,6 +825,7 @@ class MainActivity :
         val isConnectionsRoute = currentRootRoute == Screen.Connections.route
         val isGroupsRoute = currentRootRoute == Screen.Groups.route
         val isLogRoute = currentRootRoute == Screen.Log.route
+        val isUSBIPRoute = currentRoute == Screen.Tools.route || currentRoute?.startsWith("tools/usbip") == true
 
         val isSubScreen = isSettingsSubScreen || isToolsSubScreen || isConnectionsDetail || isProfileRoute
         // Get LogViewModel instance if we're on the Log screen
@@ -866,12 +867,10 @@ class MainActivity :
         val taildropSendSessions by TaildropSendManager.sessions.collectAsState()
         val taildropFailedCount = taildropSendSessions.count { it.errorMessage != null }
 
-        val usbIPStatusViewModel: USBIPStatusViewModel? =
-            if (isToolsRoute) {
-                viewModel()
-            } else {
-                null
-            }
+        val usbIPStatusViewModel: USBIPStatusViewModel = viewModel()
+        LaunchedEffect(usbIPStatusViewModel, isUSBIPRoute, currentServiceStatus) {
+            usbIPStatusViewModel.updateRouteState(isUSBIPRoute, currentServiceStatus)
+        }
 
         val openConnectStatusViewModel: OpenConnectStatusViewModel? =
             if (isToolsRoute) {
