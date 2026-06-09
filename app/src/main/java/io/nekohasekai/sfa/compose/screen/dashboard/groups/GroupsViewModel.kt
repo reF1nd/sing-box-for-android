@@ -61,13 +61,13 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
                         commandClient.addHandler(this@GroupsViewModel)
                     } else {
                         updateState { copy(isLoading = true) }
-                        commandClient.connect()
+                        connectCommandClient()
                     }
                 } else {
                     if (isUsingSharedClient) {
                         commandClient.removeHandler(this@GroupsViewModel)
                     } else {
-                        commandClient.disconnect()
+                        disconnectCommandClient()
                     }
                 }
             }
@@ -89,11 +89,11 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
         if (status == Status.Started) {
             if (!isUsingSharedClient && AppLifecycleObserver.isForeground.value) {
                 updateState { copy(isLoading = true) }
-                commandClient.connect()
+                connectCommandClient()
             }
         } else {
             if (!isUsingSharedClient) {
-                commandClient.disconnect()
+                disconnectCommandClient()
             }
             updateState {
                 copy(
@@ -101,6 +101,18 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
                     isLoading = false,
                 )
             }
+        }
+    }
+
+    private fun connectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    private fun disconnectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
         }
     }
 

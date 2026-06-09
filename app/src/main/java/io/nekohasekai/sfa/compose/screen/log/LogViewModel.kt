@@ -34,9 +34,9 @@ class LogViewModel :
             AppLifecycleObserver.isForeground.collect { foreground ->
                 if (lastServiceStatus != Status.Started) return@collect
                 if (foreground) {
-                    commandClient.connect()
+                    connectCommandClient()
                 } else {
-                    commandClient.disconnect()
+                    disconnectCommandClient()
                 }
             }
         }
@@ -58,12 +58,12 @@ class LogViewModel :
         when (status) {
             Status.Started -> {
                 if (AppLifecycleObserver.isForeground.value) {
-                    commandClient.connect()
+                    connectCommandClient()
                 }
             }
 
             Status.Stopped, Status.Stopping -> {
-                commandClient.disconnect()
+                disconnectCommandClient()
                 _uiState.update { it.copy(isConnected = false) }
             }
 
@@ -73,6 +73,18 @@ class LogViewModel :
 
     override fun onConnected() {
         _uiState.update { it.copy(isConnected = true) }
+    }
+
+    private fun connectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    private fun disconnectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
+        }
     }
 
     override fun onDisconnected() {

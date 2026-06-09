@@ -1,8 +1,6 @@
 package io.nekohasekai.sfa.utils
 
 import android.util.Log
-import go.Seq
-import io.nekohasekai.libbox.CommandClient
 import io.nekohasekai.libbox.CommandClientHandler
 import io.nekohasekai.libbox.CommandClientOptions
 import io.nekohasekai.libbox.ConnectionEvents
@@ -15,6 +13,10 @@ import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.sfa.ktx.toList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 open class CommandClient(
     private val scope: CoroutineScope,
@@ -81,11 +83,27 @@ open class CommandClient(
         fun writeConnectionEvents(events: ConnectionEvents) {}
     }
 
-    private var commandClient: CommandClient? = null
-    private val clientHandler = ClientHandler()
+    private val access = Any()
+    private var connectionEpoch = 0
+    private var connecting = false
+    private var commandClient: io.nekohasekai.libbox.CommandClient? = null
 
     fun connect() {
-        disconnect()
+        val epoch: Int
+        val previousClient: io.nekohasekai.libbox.CommandClient?
+        synchronized(access) {
+            epoch = ++connectionEpoch
+            previousClient = commandClient
+            commandClient = null
+            cachedGroups = null
+            connecting = true
+        }
+        if (previousClient != null) {
+            getAllHandlers().forEach { it.onDisconnected() }
+            runCatching {
+                previousClient.disconnect()
+            }
+        }
         val options = CommandClientOptions()
         connectionTypes.forEach { connectionType ->
             val command =
@@ -99,39 +117,84 @@ open class CommandClient(
             options.addCommand(command)
         }
         options.statusInterval = 1 * 1000 * 1000 * 1000
-        val commandClient = CommandClient(clientHandler, options)
+        val commandClient = io.nekohasekai.libbox.CommandClient(ClientHandler(epoch), options)
         try {
             commandClient.connect()
         } catch (e: Exception) {
+            synchronized(access) {
+                if (epoch == connectionEpoch) {
+                    connecting = false
+                }
+            }
             Log.d("CommandClient", "connect failed", e)
             return
         }
-        this.commandClient = commandClient
-    }
-
-    fun disconnect() {
-        commandClient?.apply {
-            runCatching {
-                disconnect()
+        val stale =
+            synchronized(access) {
+                if (epoch != connectionEpoch) {
+                    true
+                } else {
+                    this.commandClient = commandClient
+                    connecting = false
+                    false
+                }
             }
-//            Seq.destroyRef(refnum)
+        if (stale) {
+            runCatching {
+                commandClient.disconnect()
+            }
         }
-        commandClient = null
     }
 
-    private inner class ClientHandler : CommandClientHandler {
+    @OptIn(DelicateCoroutinesApi::class)
+    fun disconnect() {
+        val client: io.nekohasekai.libbox.CommandClient?
+        val notifyDisconnected: Boolean
+        synchronized(access) {
+            connectionEpoch++
+            client = commandClient
+            notifyDisconnected = client != null || connecting
+            cachedGroups = null
+            commandClient = null
+            connecting = false
+        }
+        if (notifyDisconnected) {
+            getAllHandlers().forEach { it.onDisconnected() }
+        }
+        if (client != null) {
+            // The owning scope may already be cancelled when this is called from
+            // ViewModel.onCleared, so release the libbox client independently.
+            GlobalScope.launch(Dispatchers.IO) {
+                runCatching {
+                    client.disconnect()
+                }
+            }
+        }
+    }
+
+    private fun isActiveEpoch(epoch: Int): Boolean = synchronized(access) { epoch == connectionEpoch }
+
+    private inner class ClientHandler(private val epoch: Int) : CommandClientHandler {
         override fun connected() {
+            if (!isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.onConnected() }
             Log.d("CommandClient", "connected")
         }
 
         override fun disconnected(message: String?) {
+            synchronized(access) {
+                if (epoch != connectionEpoch) return
+                connectionEpoch++
+                connecting = false
+                cachedGroups = null
+                commandClient = null
+            }
             getAllHandlers().forEach { it.onDisconnected() }
             Log.d("CommandClient", "disconnected: $message")
         }
 
         override fun writeGroups(message: OutboundGroupIterator?) {
-            if (message == null) {
+            if (message == null || !isActiveEpoch(epoch)) {
                 return
             }
             val groups = mutableListOf<OutboundGroup>()
@@ -143,15 +206,17 @@ open class CommandClient(
         }
 
         override fun setDefaultLogLevel(level: Int) {
+            if (!isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.setDefaultLogLevel(level) }
         }
 
         override fun clearLogs() {
+            if (!isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.clearLogs() }
         }
 
         override fun writeLogs(messageList: LogIterator?) {
-            if (messageList == null) {
+            if (messageList == null || !isActiveEpoch(epoch)) {
                 return
             }
             val logs = messageList.toList()
@@ -159,20 +224,23 @@ open class CommandClient(
         }
 
         override fun writeStatus(message: StatusMessage) {
+            if (!isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.updateStatus(message) }
         }
 
         override fun initializeClashMode(modeList: StringIterator, currentMode: String) {
+            if (!isActiveEpoch(epoch)) return
             val modes = modeList.toList()
             getAllHandlers().forEach { it.initializeClashMode(modes, currentMode) }
         }
 
         override fun updateClashMode(newMode: String) {
+            if (!isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.updateClashMode(newMode) }
         }
 
         override fun writeConnectionEvents(events: ConnectionEvents?) {
-            if (events == null) return
+            if (events == null || !isActiveEpoch(epoch)) return
             getAllHandlers().forEach { it.writeConnectionEvents(events) }
         }
     }

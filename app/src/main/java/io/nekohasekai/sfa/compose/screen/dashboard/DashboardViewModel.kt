@@ -159,9 +159,9 @@ class DashboardViewModel :
             AppLifecycleObserver.isForeground.collect { foreground ->
                 if (_serviceStatus.value != Status.Started) return@collect
                 if (foreground) {
-                    commandClient.connect()
+                    connectCommandClient()
                 } else {
-                    commandClient.disconnect()
+                    disconnectCommandClient()
                 }
             }
         }
@@ -451,14 +451,14 @@ class DashboardViewModel :
             Status.Started -> {
                 checkDeprecatedNotes()
                 if (AppLifecycleObserver.isForeground.value) {
-                    commandClient.connect()
+                    connectCommandClient()
                 }
                 reloadSystemProxyStatus()
                 reloadStartedAt()
             }
 
             Status.Stopped -> {
-                commandClient.disconnect()
+                disconnectCommandClient()
                 updateState {
                     copy(
                         hasGroups = false,
@@ -483,6 +483,18 @@ class DashboardViewModel :
             }
 
             else -> {}
+        }
+    }
+
+    private fun connectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    private fun disconnectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
         }
     }
 
