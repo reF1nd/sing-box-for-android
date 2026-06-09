@@ -64,7 +64,7 @@ object USBIPManager {
             for (session in current) {
                 session.closed = true
                 for (bridge in session.bridges.values) bridge.close()
-                runCatching { session.session.close() }
+                closeProviderSession(session.session)
             }
             synchronized(access) { endErrors.clear() }
             publish()
@@ -123,7 +123,7 @@ object USBIPManager {
         val libboxSession = CommandTarget.standaloneClient().provideUSBDevices(handler(serverTag))
         synchronized(access) {
             sessions[serverTag]?.let {
-                runCatching { libboxSession.close() }
+                closeProviderSession(libboxSession)
                 return it
             }
             val session = ServerSession(serverTag, libboxSession)
@@ -191,9 +191,9 @@ object USBIPManager {
                     }
                 }
                 session.bridges.values.toList().also { session.bridges.clear() }
-            }
+        }
         for (bridge in bridges) bridge.close()
-        runCatching { session.session.close() }
+        closeProviderSession(session.session)
         synchronized(access) { sessions.remove(serverTag) }
         publish()
         stopServiceIfIdle()
@@ -223,11 +223,19 @@ object USBIPManager {
                 } else {
                     false
                 }
-            }
+        }
         if (empty) {
-            runCatching { session.session.close() }
+            closeProviderSession(session.session)
             publish()
             stopServiceIfIdle()
+        }
+    }
+
+    private fun closeProviderSession(session: USBProviderSession) {
+        scope.launch {
+            runCatching {
+                session.close()
+            }
         }
     }
 

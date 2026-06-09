@@ -6,7 +6,9 @@ import io.nekohasekai.libbox.TailscalePingResult
 import io.nekohasekai.libbox.TailscalePingSession
 import io.nekohasekai.sfa.compose.base.BaseViewModel
 import io.nekohasekai.sfa.utils.CommandTarget
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -25,10 +27,12 @@ data class TailscalePingState(
 class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
     private val maxHistorySize = 30
     private var pingSession: TailscalePingSession? = null
+    private var sessionGeneration = 0L
 
     override fun createInitialState() = TailscalePingState()
 
     fun startPing(endpointTag: String, peerIP: String) {
+        val generation = ++sessionGeneration
         updateState {
             copy(
                 isRunning = true,
@@ -49,7 +53,7 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
                                 override fun onPingResult(result: TailscalePingResult?) {
                                     result ?: return
                                     viewModelScope.launch {
-                                        if (!currentState.isRunning) return@launch
+                                        if (!isCurrentSession(generation)) return@launch
                                         if (result.error.isNotEmpty()) {
                                             updateState { copy(error = result.error) }
                                             return@launch
@@ -76,7 +80,7 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
 
                                 override fun onError(message: String?) {
                                     viewModelScope.launch {
-                                        if (!currentState.isRunning) return@launch
+                                        if (!isCurrentSession(generation)) return@launch
                                         updateState { copy(isRunning = false) }
                                         pingSession = null
                                     }
@@ -85,7 +89,7 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
                         )
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    if (!currentState.isRunning) return@withContext
+                    if (!isCurrentSession(generation)) return@withContext
                     updateState { copy(isRunning = false) }
                     pingSession = null
                 }
@@ -93,12 +97,24 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
         }
     }
 
-    fun stopPing() {
-        try {
-            pingSession?.close()
-        } catch (_: Exception) {
-        }
+    private fun isCurrentSession(generation: Long): Boolean {
+        return sessionGeneration == generation && currentState.isRunning
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun closePingSession() {
+        val session = pingSession ?: return
         pingSession = null
+        GlobalScope.launch(Dispatchers.IO) {
+            runCatching {
+                session.close()
+            }
+        }
+    }
+
+    fun stopPing() {
+        sessionGeneration++
+        closePingSession()
         updateState { copy(isRunning = false) }
     }
 

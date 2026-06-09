@@ -8,7 +8,9 @@ import io.nekohasekai.libbox.STUNTestResult
 import io.nekohasekai.libbox.STUNTestSession
 import io.nekohasekai.sfa.compose.base.BaseViewModel
 import io.nekohasekai.sfa.utils.CommandTarget
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -27,6 +29,7 @@ data class STUNTestState(
 class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
     private var standaloneTest: io.nekohasekai.libbox.STUNTest? = null
     private var stunSession: STUNTestSession? = null
+    private var sessionGeneration = 0L
 
     override fun createInitialState() = STUNTestState()
 
@@ -44,6 +47,7 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
     }
 
     fun startTest(vpnRunning: Boolean) {
+        val generation = ++sessionGeneration
         updateState {
             copy(
                 phase = -1,
@@ -58,7 +62,7 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
 
         val server = currentState.server
         val outboundTag = currentState.selectedOutbound
-        val handler = createHandler()
+        val handler = createHandler(generation)
 
         if (vpnRunning) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -68,7 +72,7 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
                             .startSTUNTest(server, outboundTag, handler)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        if (!currentState.isRunning) return@withContext
+                        if (!isCurrentSession(generation)) return@withContext
                         updateState { copy(isRunning = false) }
                         stunSession = null
                         sendError(e)
@@ -86,12 +90,20 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
         }
     }
 
-    fun cancelTest() {
-        try {
-            stunSession?.close()
-        } catch (_: Exception) {
-        }
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun closeStunSession() {
+        val session = stunSession ?: return
         stunSession = null
+        GlobalScope.launch(Dispatchers.IO) {
+            runCatching {
+                session.close()
+            }
+        }
+    }
+
+    fun cancelTest() {
+        sessionGeneration++
+        closeStunSession()
         standaloneTest?.cancel()
         standaloneTest = null
         updateState { copy(isRunning = false) }
@@ -102,12 +114,16 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
         super.onCleared()
     }
 
-    private fun createHandler(): STUNTestHandler {
+    private fun isCurrentSession(generation: Long): Boolean {
+        return sessionGeneration == generation && currentState.isRunning
+    }
+
+    private fun createHandler(generation: Long): STUNTestHandler {
         return object : STUNTestHandler {
             override fun onProgress(progress: STUNTestProgress?) {
                 progress ?: return
                 viewModelScope.launch {
-                    if (!currentState.isRunning) return@launch
+                    if (!isCurrentSession(generation)) return@launch
                     updateState {
                         copy(
                             phase = progress.phase.toInt(),
@@ -123,7 +139,7 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
             override fun onResult(result: STUNTestResult?) {
                 result ?: return
                 viewModelScope.launch {
-                    if (!currentState.isRunning) return@launch
+                    if (!isCurrentSession(generation)) return@launch
                     updateState {
                         copy(
                             phase = Libbox.STUNPhaseDone.toInt(),
@@ -142,7 +158,7 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
 
             override fun onError(message: String?) {
                 viewModelScope.launch {
-                    if (!currentState.isRunning) return@launch
+                    if (!isCurrentSession(generation)) return@launch
                     updateState { copy(isRunning = false) }
                     standaloneTest = null
                     stunSession = null
