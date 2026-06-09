@@ -26,6 +26,10 @@ class StreamSubscription<T : Any>(private val closeSession: (T) -> Unit) {
         scope.launch { runCatching { closeSession(newSession) } }
     }
 
+    fun isCurrent(token: Long): Boolean = synchronized(access) {
+        generation == token
+    }
+
     fun close() {
         synchronized(access) {
             dropCurrent()
@@ -33,11 +37,12 @@ class StreamSubscription<T : Any>(private val closeSession: (T) -> Unit) {
         }
     }
 
-    fun discard(token: Long) {
+    fun discard(token: Long): Boolean {
         synchronized(access) {
-            if (generation != token) return
+            if (generation != token) return false
             session = null
             generation++
+            return true
         }
     }
 

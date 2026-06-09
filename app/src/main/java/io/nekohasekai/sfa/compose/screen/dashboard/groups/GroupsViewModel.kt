@@ -75,13 +75,13 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
                         commandClient.addHandler(this@GroupsViewModel)
                     } else {
                         updateState { copy(isLoading = true) }
-                        commandClient.connect()
+                        connectCommandClient()
                     }
                 } else {
                     if (isUsingSharedClient) {
                         commandClient.removeHandler(this@GroupsViewModel)
                     } else {
-                        commandClient.disconnect()
+                        disconnectCommandClient()
                     }
                 }
             }
@@ -105,13 +105,33 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
         if (RemoteControlManager.remoteServer.value != null) {
             return
         }
-        if (status != Status.Started) {
+        if (status == Status.Started) {
+            if (!isUsingSharedClient && AppLifecycleObserver.isForeground.value) {
+                updateState { copy(isLoading = true) }
+                connectCommandClient()
+            }
+        } else {
+            if (!isUsingSharedClient) {
+                disconnectCommandClient()
+            }
             updateState {
                 copy(
                     groups = emptyList(),
                     isLoading = false,
                 )
             }
+        }
+    }
+
+    private fun connectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    private fun disconnectCommandClient() {
+        viewModelScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
         }
     }
 

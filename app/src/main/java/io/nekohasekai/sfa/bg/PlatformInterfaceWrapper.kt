@@ -90,7 +90,9 @@ interface PlatformInterfaceWrapper : PlatformInterface {
     }
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
-        DefaultNetworkMonitor.setListener(listener)
+        runBlocking {
+            DefaultNetworkMonitor.setListener(listener)?.join()
+        }
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
