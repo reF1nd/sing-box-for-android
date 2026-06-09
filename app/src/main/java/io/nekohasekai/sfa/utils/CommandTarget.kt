@@ -3,6 +3,10 @@ package io.nekohasekai.sfa.utils
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.RemoteConnectionOptions
 import io.nekohasekai.sfa.database.RemoteServer
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 
 object CommandTarget {
     private val access = Any()
@@ -18,6 +22,7 @@ object CommandTarget {
     val isRemote: Boolean
         get() = remoteServer != null
 
+    @OptIn(DelicateCoroutinesApi::class)
     fun setRemoteServer(server: RemoteServer?) {
         val previousClient: io.nekohasekai.libbox.CommandClient?
         synchronized(access) {
@@ -25,9 +30,11 @@ object CommandTarget {
             sharedRemoteClient = null
             activeRemoteServer = server
         }
-        previousClient?.apply {
-            runCatching {
-                disconnect()
+        previousClient?.let { client ->
+            GlobalScope.launch(Dispatchers.IO) {
+                runCatching {
+                    client.disconnect()
+                }
             }
         }
     }
