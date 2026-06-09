@@ -25,6 +25,7 @@ import io.nekohasekai.sfa.utils.CommandClient
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class ServiceNotification(private val status: MutableLiveData<Status>, private val service: Service) :
@@ -101,7 +102,9 @@ class ServiceNotification(private val status: MutableLiveData<Status>, private v
 
     suspend fun start() {
         if (Settings.dynamicNotification && checkPermission()) {
-            commandClient.connect()
+            withContext(Dispatchers.IO) {
+                commandClient.connect()
+            }
             withContext(Dispatchers.Main) {
                 registerReceiver()
             }
@@ -131,21 +134,35 @@ class ServiceNotification(private val status: MutableLiveData<Status>, private v
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_SCREEN_ON -> {
-                commandClient.connect()
+                connectCommandClient()
             }
 
             Intent.ACTION_SCREEN_OFF -> {
-                commandClient.disconnect()
+                disconnectCommandClient()
             }
         }
     }
 
     fun close() {
-        commandClient.disconnect()
+        disconnectCommandClient()
         ServiceCompat.stopForeground(service, ServiceCompat.STOP_FOREGROUND_REMOVE)
         if (receiverRegistered) {
             service.unregisterReceiver(this)
             receiverRegistered = false
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun connectCommandClient() {
+        GlobalScope.launch(Dispatchers.IO) {
+            commandClient.connect()
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun disconnectCommandClient() {
+        GlobalScope.launch(Dispatchers.IO) {
+            commandClient.disconnect()
         }
     }
 }
