@@ -7,18 +7,19 @@ import android.system.ErrnoException
 import androidx.annotation.RequiresApi
 import io.nekohasekai.libbox.ExchangeContext
 import io.nekohasekai.libbox.LocalDNSTransport
-import io.nekohasekai.sfa.ktx.tryResume
-import io.nekohasekai.sfa.ktx.tryResumeWithException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.net.InetAddress
 import java.net.UnknownHostException
-import java.util.concurrent.CancellationException
-import kotlin.coroutines.suspendCoroutine
+import java.util.concurrent.atomic.AtomicBoolean
 
 object LocalResolver : LocalDNSTransport {
     private const val RCODE_NXDOMAIN = 3
+    private const val DNS_QUERY_TIMEOUT_MILLIS = 10_000L
 
     override fun raw(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
@@ -26,32 +27,29 @@ object LocalResolver : LocalDNSTransport {
     override fun exchange(ctx: ExchangeContext, message: ByteArray) {
         val defaultNetwork = DefaultNetworkMonitor.defaultNetwork ?: error("missing default interface")
         return runBlocking {
-            suspendCoroutine { continuation ->
-                val signal = CancellationSignal()
-                ctx.onCancel {
-                    signal.cancel()
-                    continuation.tryResumeWithException(CancellationException())
-                }
+            awaitDNS(ctx) { signal, completion ->
                 val callback =
                     object : DnsResolver.Callback<ByteArray> {
                         override fun onAnswer(answer: ByteArray, rcode: Int) {
-                            if (rcode == 0) {
-                                ctx.rawSuccess(answer)
-                            } else {
-                                ctx.errorCode(rcode)
+                            completion.complete {
+                                if (rcode == 0) {
+                                    ctx.rawSuccess(answer)
+                                } else {
+                                    ctx.errorCode(rcode)
+                                }
                             }
-                            continuation.tryResume(Unit)
                         }
 
                         override fun onError(error: DnsResolver.DnsException) {
                             when (val cause = error.cause) {
                                 is ErrnoException -> {
-                                    ctx.errnoCode(cause.errno)
-                                    continuation.tryResume(Unit)
+                                    completion.complete {
+                                        ctx.errnoCode(cause.errno)
+                                    }
                                     return
                                 }
                             }
-                            continuation.tryResumeWithException(error)
+                            completion.completeExceptionally(error)
                         }
                     }
                 DnsResolver.getInstance().rawQuery(
@@ -70,36 +68,33 @@ object LocalResolver : LocalDNSTransport {
         val defaultNetwork = DefaultNetworkMonitor.defaultNetwork ?: error("missing default interface")
         return runBlocking {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                suspendCoroutine { continuation ->
-                    val signal = CancellationSignal()
-                    ctx.onCancel {
-                        signal.cancel()
-                        continuation.tryResumeWithException(CancellationException())
-                    }
+                awaitDNS(ctx) { signal, completion ->
                     val callback =
                         object : DnsResolver.Callback<Collection<InetAddress>> {
                             @Suppress("ThrowableNotThrown")
                             override fun onAnswer(answer: Collection<InetAddress>, rcode: Int) {
-                                if (rcode == 0) {
-                                    ctx.success(
-                                        (answer as Collection<InetAddress?>).mapNotNull { it?.hostAddress }
-                                            .joinToString("\n"),
-                                    )
-                                } else {
-                                    ctx.errorCode(rcode)
+                                completion.complete {
+                                    if (rcode == 0) {
+                                        ctx.success(
+                                            (answer as Collection<InetAddress?>).mapNotNull { it?.hostAddress }
+                                                .joinToString("\n"),
+                                        )
+                                    } else {
+                                        ctx.errorCode(rcode)
+                                    }
                                 }
-                                continuation.tryResume(Unit)
                             }
 
                             override fun onError(error: DnsResolver.DnsException) {
                                 when (val cause = error.cause) {
                                     is ErrnoException -> {
-                                        ctx.errnoCode(cause.errno)
-                                        continuation.tryResume(Unit)
+                                        completion.complete {
+                                            ctx.errnoCode(cause.errno)
+                                        }
                                         return
                                     }
                                 }
-                                continuation.tryResumeWithException(error)
+                                completion.completeExceptionally(error)
                             }
                         }
                     val type =
@@ -138,6 +133,53 @@ object LocalResolver : LocalDNSTransport {
                         return@runBlocking
                     }
                 ctx.success(answer.mapNotNull { it.hostAddress }.joinToString("\n"))
+            }
+        }
+    }
+
+    private suspend fun awaitDNS(
+        ctx: ExchangeContext,
+        query: (CancellationSignal, DNSQueryCompletion) -> Unit,
+    ) {
+        val signal = CancellationSignal()
+        val completion = DNSQueryCompletion()
+        ctx.onCancel {
+            signal.cancel()
+            completion.completeExceptionally(CancellationException("DNS query canceled"))
+        }
+        try {
+            query(signal, completion)
+            withTimeout(DNS_QUERY_TIMEOUT_MILLIS) {
+                completion.await()
+            }
+        } catch (e: Throwable) {
+            signal.cancel()
+            completion.completeExceptionally(e)
+            throw e
+        }
+    }
+
+    private class DNSQueryCompletion {
+        private val completed = AtomicBoolean(false)
+        private val result = CompletableDeferred<Unit>()
+
+        suspend fun await() {
+            result.await()
+        }
+
+        fun complete(action: () -> Unit) {
+            if (!completed.compareAndSet(false, true)) return
+            try {
+                action()
+                result.complete(Unit)
+            } catch (e: Throwable) {
+                result.completeExceptionally(e)
+            }
+        }
+
+        fun completeExceptionally(error: Throwable) {
+            if (completed.compareAndSet(false, true)) {
+                result.completeExceptionally(error)
             }
         }
     }
