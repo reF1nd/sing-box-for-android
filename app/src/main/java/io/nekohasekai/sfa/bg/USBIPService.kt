@@ -32,6 +32,7 @@ class USBIPService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collectJob: Job? = null
     private var receiverRegistered = false
+    private var lastNotifiedDeviceCount: Int? = null
 
     private val detachReceiver =
         object : BroadcastReceiver() {
@@ -51,12 +52,14 @@ class USBIPService : Service() {
             return START_NOT_STICKY
         }
         createChannel()
+        val initialDeviceCount = USBIPManager.state.value.devices.size
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            buildNotification(USBIPManager.state.value.devices.size),
+            buildNotification(initialDeviceCount),
             foregroundServiceType(),
         )
+        lastNotifiedDeviceCount = initialDeviceCount
         registerDetachReceiver()
         if (collectJob == null) {
             collectJob =
@@ -64,7 +67,8 @@ class USBIPService : Service() {
                     USBIPManager.state.collect { state ->
                         if (state.devices.isEmpty()) {
                             stopSelf()
-                        } else {
+                        } else if (state.devices.size != lastNotifiedDeviceCount) {
+                            lastNotifiedDeviceCount = state.devices.size
                             Application.notificationManager.notify(NOTIFICATION_ID, buildNotification(state.devices.size))
                         }
                     }
@@ -126,6 +130,7 @@ class USBIPService : Service() {
         super.onDestroy()
         collectJob?.cancel()
         collectJob = null
+        lastNotifiedDeviceCount = null
         if (receiverRegistered) {
             unregisterReceiver(detachReceiver)
             receiverRegistered = false

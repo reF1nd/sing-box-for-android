@@ -121,6 +121,7 @@ class DashboardViewModel :
     CommandClient.Handler {
     private val _serviceStatus = MutableStateFlow(Status.Stopped)
     val serviceStatus: StateFlow<Status> = _serviceStatus.asStateFlow()
+    private var pendingToggle = false
 
     internal val commandClient =
         CommandClient(
@@ -241,9 +242,17 @@ class DashboardViewModel :
 
     fun toggleService() {
         when (currentState.serviceStatus) {
-            Status.Starting, Status.Started -> stopService()
-            Status.Stopped -> sendGlobalEvent(UiEvent.RequestStartService)
-            else -> { /* Ignore while transitioning */ }
+            Status.Started -> {
+                pendingToggle = false
+                stopService()
+            }
+            Status.Stopped -> {
+                pendingToggle = false
+                sendGlobalEvent(UiEvent.RequestStartService)
+            }
+            Status.Starting, Status.Stopping -> {
+                pendingToggle = !pendingToggle
+            }
         }
     }
 
@@ -455,6 +464,19 @@ class DashboardViewModel :
                 )
             }
             handleServiceStatusChange(status)
+            if (pendingToggle) {
+                when (status) {
+                    Status.Started -> {
+                        pendingToggle = false
+                        stopService()
+                    }
+                    Status.Stopped -> {
+                        pendingToggle = false
+                        sendGlobalEvent(UiEvent.RequestStartService)
+                    }
+                    else -> {}
+                }
+            }
         }
     }
 

@@ -2,9 +2,10 @@ package io.nekohasekai.sfa.qrs
 
 import android.util.Base64
 import java.io.ByteArrayOutputStream
+import java.io.Closeable
 import java.util.zip.Inflater
 
-class QRSDecoder {
+class QRSDecoder : Closeable {
     private var codec: LubyCodec? = null
     private var state: LubyCodec.DecodingState? = null
     private val processedHashes = mutableSetOf<Int>()
@@ -127,6 +128,14 @@ class QRSDecoder {
         codec = null
         state = null
         processedHashes.clear()
+    }
+
+    @Synchronized
+    override fun close() {
+        codec = null
+        state = null
+        processedHashes.clear()
+        inflater.end()
     }
 
     val progress: DecodeProgress?
