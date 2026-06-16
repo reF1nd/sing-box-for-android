@@ -346,6 +346,8 @@ dependencies {
     "otherLegacyImplementation"("androidx.compose.runtime:runtime-livedata")
 
     // Debug/Test dependencies
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     "androidTestPlayImplementation"(composeBom24)
