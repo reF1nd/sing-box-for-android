@@ -30,6 +30,7 @@ open class CommandClient(
     ) : this(scope, listOf(connectionType), handler)
 
     private val additionalHandlers = mutableListOf<Handler>()
+    private val primaryHandlerOnly: List<Handler> = listOf(handler)
     private var cachedGroups: MutableList<OutboundGroup>? = null
 
     fun addHandler(handler: Handler) {
@@ -50,7 +51,11 @@ open class CommandClient(
     }
 
     private fun getAllHandlers(): List<Handler> = synchronized(additionalHandlers) {
-        listOf(handler) + additionalHandlers
+        if (additionalHandlers.isEmpty()) {
+            primaryHandlerOnly
+        } else {
+            listOf(handler) + additionalHandlers
+        }
     }
 
     enum class ConnectionType {

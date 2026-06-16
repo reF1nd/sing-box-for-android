@@ -14,9 +14,11 @@ import io.nekohasekai.sfa.ktx.toList
 import io.nekohasekai.sfa.utils.AppLifecycleObserver
 import io.nekohasekai.sfa.utils.CommandClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -56,15 +58,11 @@ class ConnectionsViewModel :
     private var connectionsStore: Connections? = null
     private val connectionsMutex = Mutex()
     private val connectionsGeneration = AtomicLong(0)
+    private val connectionEvents = Channel<QueuedConnectionEvents>(Channel.UNLIMITED)
 
     override fun createInitialState() = ConnectionsUiState()
 
-    private data class ConnectionState(
-        val foreground: Boolean,
-        val screenOn: Boolean,
-        val visibleCount: Int,
-        val status: Status,
-    )
+    private data class QueuedConnectionEvents(val generation: Long, val events: ConnectionEvents)
 
     init {
         viewModelScope.launch {
@@ -74,15 +72,58 @@ class ConnectionsViewModel :
                 _visibleCount,
                 _serviceStatus,
             ) { foreground, screenOn, visibleCount, status ->
-                ConnectionState(foreground, screenOn, visibleCount, status)
-            }.collect { state ->
-                val shouldConnect = state.foreground && state.screenOn &&
-                    state.visibleCount > 0 && state.status == Status.Started
+                foreground && screenOn && visibleCount > 0 && status == Status.Started
+            }.distinctUntilChanged().collect { shouldConnect ->
                 if (shouldConnect) {
                     updateState { copy(isLoading = true) }
                     connectCommandClient()
                 } else {
                     disconnectCommandClient()
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            var nextQueuedEvent: QueuedConnectionEvents? = null
+            while (true) {
+                val firstQueuedEvent = nextQueuedEvent ?: connectionEvents.receive()
+                nextQueuedEvent = null
+                val generation = firstQueuedEvent.generation
+                val pendingEvents = mutableListOf(firstQueuedEvent.events)
+                var receivedEvent = connectionEvents.tryReceive().getOrNull()
+                while (receivedEvent != null) {
+                    if (receivedEvent.generation == generation) {
+                        pendingEvents.add(receivedEvent.events)
+                    } else {
+                        nextQueuedEvent = receivedEvent
+                        break
+                    }
+                    receivedEvent = connectionEvents.tryReceive().getOrNull()
+                }
+                val snapshot = connectionsMutex.withLock {
+                    if (connectionsGeneration.get() != generation) {
+                        return@withLock null
+                    }
+                    if (connectionsStore == null) {
+                        connectionsStore = Connections()
+                    }
+                    val store = connectionsStore ?: return@withLock null
+                    pendingEvents.forEach { store.applyEvents(it) }
+                    buildConnectionLists(store, uiState.value)
+                } ?: continue
+                if (connectionsGeneration.get() != generation) {
+                    continue
+                }
+                withContext(Dispatchers.Main) {
+                    if (connectionsGeneration.get() != generation) {
+                        return@withContext
+                    }
+                    updateState {
+                        copy(
+                            connections = snapshot.connections,
+                            allConnections = snapshot.allConnections,
+                            isLoading = false,
+                        )
+                    }
                 }
             }
         }
@@ -114,8 +155,8 @@ class ConnectionsViewModel :
             withContext(Dispatchers.Default) {
                 connectionsMutex.withLock {
                     connectionsStore = null
+                    connectionsGeneration.incrementAndGet()
                 }
-                connectionsGeneration.incrementAndGet()
             }
             updateState {
                 copy(connections = emptyList(), allConnections = emptyList(), isLoading = false)
@@ -196,8 +237,8 @@ class ConnectionsViewModel :
         viewModelScope.launch(Dispatchers.Default) {
             connectionsMutex.withLock {
                 connectionsStore = null
+                connectionsGeneration.incrementAndGet()
             }
-            connectionsGeneration.incrementAndGet()
             withContext(Dispatchers.Main) {
                 updateState {
                     copy(connections = emptyList(), allConnections = emptyList(), isLoading = false)
@@ -207,32 +248,7 @@ class ConnectionsViewModel :
     }
 
     override fun writeConnectionEvents(events: ConnectionEvents) {
-        viewModelScope.launch(Dispatchers.Default) {
-            val generation = connectionsGeneration.get()
-            val snapshot = connectionsMutex.withLock {
-                if (connectionsStore == null) {
-                    connectionsStore = Connections()
-                }
-                val store = connectionsStore ?: return@withLock null
-                store.applyEvents(events)
-                buildConnectionLists(store, uiState.value)
-            } ?: return@launch
-            if (connectionsGeneration.get() != generation) {
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                if (connectionsGeneration.get() != generation) {
-                    return@withContext
-                }
-                updateState {
-                    copy(
-                        connections = snapshot.connections,
-                        allConnections = snapshot.allConnections,
-                        isLoading = false,
-                    )
-                }
-            }
-        }
+        connectionEvents.trySend(QueuedConnectionEvents(connectionsGeneration.get(), events))
     }
 
     private fun requestConnectionsRefresh() {
