@@ -28,7 +28,11 @@ data class STUNTestState(
 
 class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
     private var standaloneTest: io.nekohasekai.libbox.STUNTest? = null
+
+    @Volatile
     private var stunSession: STUNTestSession? = null
+
+    @Volatile
     private var sessionGeneration = 0L
 
     override fun createInitialState() = STUNTestState()
@@ -67,9 +71,10 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
         if (vpnRunning) {
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    stunSession =
+                    val newSession =
                         CommandTarget.standaloneClient()
                             .startSTUNTest(server, outboundTag, handler)
+                    setStunSession(generation, newSession)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         if (!isCurrentSession(generation)) return@withContext
@@ -91,13 +96,31 @@ class STUNTestViewModel : BaseViewModel<STUNTestState, Nothing>() {
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun closeStunSession() {
-        val session = stunSession ?: return
-        stunSession = null
+    private fun closeStunSession(session: STUNTestSession) {
         GlobalScope.launch(Dispatchers.IO) {
             runCatching {
                 session.close()
             }
+        }
+    }
+
+    private fun closeStunSession() {
+        val session = stunSession ?: return
+        stunSession = null
+        closeStunSession(session)
+    }
+
+    private fun setStunSession(generation: Long, newSession: STUNTestSession) {
+        if (!isCurrentSession(generation)) {
+            closeStunSession(newSession)
+            return
+        }
+        stunSession = newSession
+        if (!isCurrentSession(generation)) {
+            if (stunSession === newSession) {
+                stunSession = null
+            }
+            closeStunSession(newSession)
         }
     }
 
