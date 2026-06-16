@@ -23,6 +23,7 @@ import java.io.File
 import java.io.IOException
 import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class RootServer : RootService() {
@@ -37,6 +38,7 @@ class RootServer : RootService() {
 
     private var tetheringCallback: Any? = null
     private var tetheringManager: Any? = null
+    private var tetheringExecutor: ExecutorService? = null
 
     private val bridgeSessions = mutableSetOf<BridgeSessionBinder>()
 
@@ -359,7 +361,9 @@ class RootServer : RootService() {
                 }
             }
             tetheringCallback = proxy
-            registerMethod.invoke(manager, Executors.newSingleThreadExecutor(), proxy)
+            val executor = Executors.newSingleThreadExecutor()
+            tetheringExecutor = executor
+            registerMethod.invoke(manager, executor, proxy)
             Log.d("RootServer", "TetheringManager monitor started")
         } catch (e: Exception) {
             Log.e("RootServer", "startTetheringMonitor failed", e)
@@ -367,19 +371,23 @@ class RootServer : RootService() {
     }
 
     private fun stopTetheringMonitor() {
-        val manager = tetheringManager ?: return
-        val callback = tetheringCallback ?: return
-        try {
-            val callbackClass =
-                Class.forName("android.net.TetheringManager\$TetheringEventCallback")
-            val unregisterMethod = manager.javaClass.getMethod(
-                "unregisterTetheringEventCallback",
-                callbackClass,
-            )
-            unregisterMethod.invoke(manager, callback)
-        } catch (e: Exception) {
-            Log.e("RootServer", "stopTetheringMonitor failed", e)
+        val manager = tetheringManager
+        val callback = tetheringCallback
+        if (manager != null && callback != null) {
+            try {
+                val callbackClass =
+                    Class.forName("android.net.TetheringManager\$TetheringEventCallback")
+                val unregisterMethod = manager.javaClass.getMethod(
+                    "unregisterTetheringEventCallback",
+                    callbackClass,
+                )
+                unregisterMethod.invoke(manager, callback)
+            } catch (e: Exception) {
+                Log.e("RootServer", "stopTetheringMonitor failed", e)
+            }
         }
+        tetheringExecutor?.shutdownNow()
+        tetheringExecutor = null
         tetheringCallback = null
         tetheringManager = null
         hostnameByMAC.clear()
