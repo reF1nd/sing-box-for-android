@@ -333,7 +333,7 @@ class QRScanViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun resetQRSState() = synchronized(qrsLock) {
-        qrsDecoder?.reset()
+        qrsDecoder?.close()
         qrsDecoder = null
         (imageAnalyzer as? ZxingQRCodeAnalyzer)?.qrsMode = false
         _uiState.update { it.copy(qrsMode = false, qrsProgress = null) }
@@ -399,5 +399,6 @@ class QRScanViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         analysisExecutor.shutdown()
+        resetQRSState()
     }
 }

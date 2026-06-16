@@ -77,18 +77,22 @@ object USBIPManager {
 
     private fun attachInternal(context: Context, serverTag: String, device: UsbDevice) {
         val deviceId = "dev-${counter.incrementAndGet()}"
+        var session: ServerSession? = null
+        var bridgeToClose: UsbDeviceBridge? = null
         try {
-            val session = ensureSession(serverTag)
-            synchronized(access) { session.devices[deviceId] = providedDevice(deviceId, serverTag, device) }
+            val currentSession = ensureSession(serverTag)
+            session = currentSession
+            synchronized(access) { currentSession.devices[deviceId] = providedDevice(deviceId, serverTag, device) }
             publish()
             startServiceIfNeeded(context)
             val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
             val (bridge, descriptor) =
-                UsbDeviceBridge.open(deviceId, serverTag, manager, device) { response -> sendResponse(session, response) }
+                UsbDeviceBridge.open(deviceId, serverTag, manager, device) { response -> sendResponse(currentSession, response) }
+            bridgeToClose = bridge
             val kept =
                 synchronized(access) {
-                    if (session.devices.containsKey(deviceId)) {
-                        session.bridges[deviceId] = bridge
+                    if (currentSession.devices.containsKey(deviceId)) {
+                        currentSession.bridges[deviceId] = bridge
                         true
                     } else {
                         false
@@ -98,8 +102,16 @@ object USBIPManager {
                 bridge.close()
                 return
             }
-            session.session.attachDevice(descriptor)
+            currentSession.session.attachDevice(descriptor)
+            bridgeToClose = null
         } catch (e: Throwable) {
+            val openedBridge = bridgeToClose
+            if (openedBridge != null) {
+                synchronized(access) {
+                    session?.bridges?.remove(deviceId)
+                }
+                openedBridge.close()
+            }
             markError(serverTag, deviceId, e.message ?: "attach failed")
         }
     }

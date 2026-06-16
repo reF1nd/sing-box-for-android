@@ -150,6 +150,9 @@ class LogViewModel :
         viewModelScope.launch(Dispatchers.Main) {
             if (_uiState.value.isPaused) {
                 bufferedLogs.addAll(processedLogs)
+                while (bufferedLogs.size > maxLines) {
+                    bufferedLogs.removeFirst()
+                }
             } else {
                 val totalSize = allLogs.size + processedLogs.size
                 val removeCount = (totalSize - maxLines).coerceAtLeast(0)
