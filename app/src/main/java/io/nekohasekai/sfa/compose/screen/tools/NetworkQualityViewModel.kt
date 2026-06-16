@@ -44,7 +44,11 @@ data class NetworkQualityState(
 
 class NetworkQualityViewModel : BaseViewModel<NetworkQualityState, Nothing>() {
     private var standaloneTest: io.nekohasekai.libbox.NetworkQualityTest? = null
+
+    @Volatile
     private var nqSession: NetworkQualityTestSession? = null
+
+    @Volatile
     private var sessionGeneration = 0L
 
     override fun createInitialState() = NetworkQualityState()
@@ -121,7 +125,7 @@ class NetworkQualityViewModel : BaseViewModel<NetworkQualityState, Nothing>() {
         if (vpnRunning) {
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    nqSession =
+                    val newSession =
                         CommandTarget.standaloneClient()
                             .startNetworkQualityTest(
                                 configURL,
@@ -131,6 +135,7 @@ class NetworkQualityViewModel : BaseViewModel<NetworkQualityState, Nothing>() {
                                 http3,
                                 handler,
                             )
+                    setNetworkQualitySession(generation, newSession)
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
                         if (!isCurrentSession(generation)) return@withContext
@@ -152,13 +157,31 @@ class NetworkQualityViewModel : BaseViewModel<NetworkQualityState, Nothing>() {
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun closeNetworkQualitySession() {
-        val session = nqSession ?: return
-        nqSession = null
+    private fun closeNetworkQualitySession(session: NetworkQualityTestSession) {
         GlobalScope.launch(Dispatchers.IO) {
             runCatching {
                 session.close()
             }
+        }
+    }
+
+    private fun closeNetworkQualitySession() {
+        val session = nqSession ?: return
+        nqSession = null
+        closeNetworkQualitySession(session)
+    }
+
+    private fun setNetworkQualitySession(generation: Long, newSession: NetworkQualityTestSession) {
+        if (!isCurrentSession(generation)) {
+            closeNetworkQualitySession(newSession)
+            return
+        }
+        nqSession = newSession
+        if (!isCurrentSession(generation)) {
+            if (nqSession === newSession) {
+                nqSession = null
+            }
+            closeNetworkQualitySession(newSession)
         }
     }
 

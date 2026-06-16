@@ -13,6 +13,8 @@ import io.nekohasekai.libbox.USBURBResponse
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 
 class UsbDeviceBridge private constructor(
     val deviceId: String,
@@ -23,9 +25,9 @@ class UsbDeviceBridge private constructor(
     private val claimedInterfaces = ArrayList<UsbInterface>()
     private val endpoints = ConcurrentHashMap<Int, UsbEndpoint>()
     private val executors = ConcurrentHashMap<Int, ExecutorService>()
+    private val executorLock = Any()
 
-    @Volatile
-    private var closed = false
+    private val closed = AtomicBoolean(false)
 
     private fun start(serverTag: String): USBDeviceDescriptor {
         val configuration = if (device.configurationCount > 0) device.getConfiguration(0) else null
@@ -90,14 +92,25 @@ class UsbDeviceBridge private constructor(
     }
 
     fun submit(request: USBURBRequest) {
-        if (closed) return
         val endpointNumber = request.endpoint and 0x0f
-        executors.getOrPut(endpointNumber) { Executors.newSingleThreadExecutor() }
-            .execute { execute(request, endpointNumber) }
+        val executor =
+            synchronized(executorLock) {
+                if (closed.get()) {
+                    null
+                } else {
+                    executors[endpointNumber] ?: Executors.newSingleThreadExecutor().also {
+                        executors[endpointNumber] = it
+                    }
+                }
+            } ?: return
+        try {
+            executor.execute { execute(request, endpointNumber) }
+        } catch (_: RejectedExecutionException) {
+        }
     }
 
     private fun execute(request: USBURBRequest, endpointNumber: Int) {
-        if (closed) return
+        if (closed.get()) return
         val response = Libbox.newUSBURBResponse(deviceId, request.seq)
         try {
             when {
@@ -108,7 +121,7 @@ class UsbDeviceBridge private constructor(
         } catch (e: Throwable) {
             response.setStatus(URB_EPROTO)
         }
-        if (!closed) send(response)
+        if (!closed.get()) send(response)
     }
 
     private fun executeControl(request: USBURBRequest, response: USBURBResponse) {
@@ -222,10 +235,14 @@ class UsbDeviceBridge private constructor(
     }
 
     fun close() {
-        if (closed) return
-        closed = true
-        for (executor in executors.values) executor.shutdownNow()
-        executors.clear()
+        if (!closed.compareAndSet(false, true)) return
+        val currentExecutors =
+            synchronized(executorLock) {
+                executors.values.toList().also {
+                    executors.clear()
+                }
+            }
+        for (executor in currentExecutors) executor.shutdownNow()
         releaseInterfaces()
         try {
             connection.close()
