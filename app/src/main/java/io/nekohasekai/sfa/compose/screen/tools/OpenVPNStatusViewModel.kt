@@ -55,8 +55,10 @@ class OpenVPNStatusViewModel : BaseViewModel<OpenVPNStatusState, Nothing>() {
         private const val MIN_API_VERSION_OPENVPN = 3
     }
 
+    @Volatile
     private var subscription: OpenVPNStatusSubscription? = null
 
+    @Volatile
     private var subscriptionGeneration = 0L
 
     override fun createInitialState() = OpenVPNStatusState()
@@ -77,7 +79,7 @@ class OpenVPNStatusViewModel : BaseViewModel<OpenVPNStatusState, Nothing>() {
                     }
                     return@launch
                 }
-                subscription =
+                val newSubscription =
                     client.subscribeOpenVPNStatus(
                         object : OpenVPNStatusHandler {
                             override fun onStatusUpdate(status: OpenVPNStatusUpdate) {
@@ -98,6 +100,7 @@ class OpenVPNStatusViewModel : BaseViewModel<OpenVPNStatusState, Nothing>() {
                             }
                         },
                     )
+                setCurrentSubscription(generation, newSubscription)
             } catch (_: Exception) {
                 viewModelScope.launch {
                     if (!isCurrentSubscription(generation)) return@launch
@@ -113,13 +116,34 @@ class OpenVPNStatusViewModel : BaseViewModel<OpenVPNStatusState, Nothing>() {
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun closeSubscription() {
-        val currentSubscription = subscription ?: return
-        subscription = null
+    private fun closeSubscription(currentSubscription: OpenVPNStatusSubscription) {
         GlobalScope.launch(Dispatchers.IO) {
             runCatching {
                 currentSubscription.close()
             }
+        }
+    }
+
+    private fun closeSubscription() {
+        val currentSubscription = subscription ?: return
+        subscription = null
+        closeSubscription(currentSubscription)
+    }
+
+    private fun setCurrentSubscription(
+        generation: Long,
+        newSubscription: OpenVPNStatusSubscription,
+    ) {
+        if (!isCurrentSubscription(generation)) {
+            closeSubscription(newSubscription)
+            return
+        }
+        subscription = newSubscription
+        if (!isCurrentSubscription(generation)) {
+            if (subscription === newSubscription) {
+                subscription = null
+            }
+            closeSubscription(newSubscription)
         }
     }
 

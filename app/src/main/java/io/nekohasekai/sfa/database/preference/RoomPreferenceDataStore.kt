@@ -1,22 +1,56 @@
 package io.nekohasekai.sfa.database.preference
 
 import androidx.preference.PreferenceDataStore
+import java.util.concurrent.ConcurrentHashMap
 
 @Suppress("MemberVisibilityCanBePrivate", "unused")
 open class RoomPreferenceDataStore(private val kvPairDao: KeyValueEntity.Dao) : PreferenceDataStore() {
-    fun getBoolean(key: String) = kvPairDao[key]?.boolean
+    private val cache = ConcurrentHashMap<String, KeyValueEntity>()
 
-    fun getFloat(key: String) = kvPairDao[key]?.float
+    @Volatile
+    private var loaded = false
+    private val loadLock = Any()
 
-    fun getInt(key: String) = kvPairDao[key]?.long?.toInt()
+    private fun ensureLoaded() {
+        if (loaded) return
+        synchronized(loadLock) {
+            if (loaded) return
+            kvPairDao.all().forEach { cache.putIfAbsent(it.key, it) }
+            loaded = true
+        }
+    }
 
-    fun getLong(key: String) = kvPairDao[key]?.long
+    private fun entity(key: String): KeyValueEntity? {
+        ensureLoaded()
+        return cache[key]
+    }
 
-    fun getString(key: String) = kvPairDao[key]?.string
+    private fun store(entity: KeyValueEntity) {
+        synchronized(loadLock) {
+            cache[entity.key] = entity
+            kvPairDao.put(entity)
+        }
+    }
 
-    fun getStringSet(key: String) = kvPairDao[key]?.stringSet
+    fun getBoolean(key: String) = entity(key)?.boolean
 
-    fun reset() = kvPairDao.reset()
+    fun getFloat(key: String) = entity(key)?.float
+
+    fun getInt(key: String) = entity(key)?.long?.toInt()
+
+    fun getLong(key: String) = entity(key)?.long
+
+    fun getString(key: String) = entity(key)?.string
+
+    fun getStringSet(key: String) = entity(key)?.stringSet
+
+    fun reset() {
+        synchronized(loadLock) {
+            cache.clear()
+            kvPairDao.reset()
+            loaded = true
+        }
+    }
 
     override fun getBoolean(key: String, defValue: Boolean) = getBoolean(key) ?: defValue
 
@@ -39,41 +73,44 @@ open class RoomPreferenceDataStore(private val kvPairDao: KeyValueEntity.Dao) : 
     fun putLong(key: String, value: Long?) = if (value == null) remove(key) else putLong(key, value)
 
     override fun putBoolean(key: String, value: Boolean) {
-        kvPairDao.put(KeyValueEntity(key).put(value))
+        store(KeyValueEntity(key).put(value))
         fireChangeListener(key)
     }
 
     override fun putFloat(key: String, value: Float) {
-        kvPairDao.put(KeyValueEntity(key).put(value))
+        store(KeyValueEntity(key).put(value))
         fireChangeListener(key)
     }
 
     override fun putInt(key: String, value: Int) {
-        kvPairDao.put(KeyValueEntity(key).put(value.toLong()))
+        store(KeyValueEntity(key).put(value.toLong()))
         fireChangeListener(key)
     }
 
     override fun putLong(key: String, value: Long) {
-        kvPairDao.put(KeyValueEntity(key).put(value))
+        store(KeyValueEntity(key).put(value))
         fireChangeListener(key)
     }
 
     override fun putString(key: String, value: String?) = if (value == null) {
         remove(key)
     } else {
-        kvPairDao.put(KeyValueEntity(key).put(value))
+        store(KeyValueEntity(key).put(value))
         fireChangeListener(key)
     }
 
     override fun putStringSet(key: String, values: MutableSet<String>?) = if (values == null) {
         remove(key)
     } else {
-        kvPairDao.put(KeyValueEntity(key).put(values))
+        store(KeyValueEntity(key).put(values))
         fireChangeListener(key)
     }
 
     fun remove(key: String) {
-        kvPairDao.delete(key)
+        synchronized(loadLock) {
+            cache.remove(key)
+            kvPairDao.delete(key)
+        }
         fireChangeListener(key)
     }
 
