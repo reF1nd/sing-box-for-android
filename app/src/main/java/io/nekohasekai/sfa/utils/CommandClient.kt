@@ -33,6 +33,7 @@ open class CommandClient(
     ) : this(scope, listOf(connectionType), handler, localOnly)
 
     private val additionalHandlers = mutableListOf<Handler>()
+    private val primaryHandlerOnly: List<Handler> = listOf(handler)
     private var cachedGroups: MutableList<OutboundGroup>? = null
     private var cachedOutbounds: List<io.nekohasekai.libbox.OutboundGroupItem>? = null
 
@@ -57,7 +58,11 @@ open class CommandClient(
     }
 
     private fun getAllHandlers(): List<Handler> = synchronized(additionalHandlers) {
-        listOf(handler) + additionalHandlers
+        if (additionalHandlers.isEmpty()) {
+            primaryHandlerOnly
+        } else {
+            listOf(handler) + additionalHandlers
+        }
     }
 
     enum class ConnectionType {
@@ -191,6 +196,8 @@ open class CommandClient(
             connectionEpoch++
             client = commandClient
             commandClient = null
+            cachedGroups = null
+            cachedOutbounds = null
         }
         if (client != null) {
             getAllHandlers().forEach { it.onDisconnected() }

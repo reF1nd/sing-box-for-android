@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.nekohasekai.sfa.R
 import io.nekohasekai.sfa.constant.Status
+import io.nekohasekai.sfa.utils.AppLifecycleObserver
 import kotlinx.coroutines.delay
 
 @Composable
@@ -177,8 +179,11 @@ private fun StatusItem(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun UptimeText(startTime: Long, modifier: Modifier = Modifier) {
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val isScreenOn by AppLifecycleObserver.isScreenOn.collectAsState()
 
-    LaunchedEffect(startTime) {
+    LaunchedEffect(startTime, isScreenOn) {
+        if (!isScreenOn) return@LaunchedEffect
+        currentTime = System.currentTimeMillis()
         while (true) {
             delay(1000)
             currentTime = System.currentTimeMillis()

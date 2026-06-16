@@ -116,8 +116,10 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
         private const val MIN_API_VERSION_OPENCONNECT = 3
     }
 
+    @Volatile
     private var subscription: OpenConnectStatusSubscription? = null
 
+    @Volatile
     private var subscriptionGeneration = 0L
 
     override fun createInitialState() = OpenConnectStatusState()
@@ -139,7 +141,7 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
                     }
                     return@launch
                 }
-                subscription =
+                val newSubscription =
                     client.subscribeOpenConnectStatus(
                         object : OpenConnectStatusHandler {
                             override fun onStatusUpdate(status: OpenConnectStatusUpdate) {
@@ -160,6 +162,7 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
                             }
                         },
                     )
+                setCurrentSubscription(generation, newSubscription)
             } catch (_: Exception) {
                 viewModelScope.launch {
                     if (!isCurrentSubscription(generation)) return@launch
@@ -175,13 +178,34 @@ class OpenConnectStatusViewModel : BaseViewModel<OpenConnectStatusState, Nothing
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun closeSubscription() {
-        val currentSubscription = subscription ?: return
-        subscription = null
+    private fun closeSubscription(currentSubscription: OpenConnectStatusSubscription) {
         GlobalScope.launch(Dispatchers.IO) {
             runCatching {
                 currentSubscription.close()
             }
+        }
+    }
+
+    private fun closeSubscription() {
+        val currentSubscription = subscription ?: return
+        subscription = null
+        closeSubscription(currentSubscription)
+    }
+
+    private fun setCurrentSubscription(
+        generation: Long,
+        newSubscription: OpenConnectStatusSubscription,
+    ) {
+        if (!isCurrentSubscription(generation)) {
+            closeSubscription(newSubscription)
+            return
+        }
+        subscription = newSubscription
+        if (!isCurrentSubscription(generation)) {
+            if (subscription === newSubscription) {
+                subscription = null
+            }
+            closeSubscription(newSubscription)
         }
     }
 

@@ -1,5 +1,6 @@
 package io.nekohasekai.sfa.compose.screen.connections
 
+import android.util.Log
 import androidx.lifecycle.viewModelScope
 import io.nekohasekai.libbox.ConnectionEvents
 import io.nekohasekai.libbox.Connections
@@ -17,12 +18,13 @@ import io.nekohasekai.sfa.utils.RemoteControlManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicLong
 
 data class ConnectionsUiState(
     val connections: List<Connection> = emptyList(),
@@ -39,35 +41,25 @@ sealed class ConnectionsEvent : ScreenEvent {
     data object AllConnectionsClosed : ConnectionsEvent()
 }
 
-class ConnectionsViewModel :
-    BaseViewModel<ConnectionsUiState, ConnectionsEvent>(),
-    CommandClient.Handler {
-    private val commandClient = CommandClient(
-        viewModelScope,
-        CommandClient.ConnectionType.Connections,
-        this,
-    )
+class ConnectionsViewModel : BaseViewModel<ConnectionsUiState, ConnectionsEvent>() {
 
     private val _serviceStatus = MutableStateFlow(Status.Stopped)
     val serviceStatus = _serviceStatus.asStateFlow()
-    private var lastServiceStatus: Status = Status.Stopped
 
     private val _visibleCount = MutableStateFlow(0)
 
-    private var connectionsStore: Connections? = null
-    private val connectionsMutex = Mutex()
-    private val connectionsGeneration = AtomicLong(0)
+    // Only the main dispatcher changes this reference. Workers own one store and
+    // must verify its identity before publishing a snapshot back on main.
+    private var activeStore: ConnectionStore? = null
+
+    private class ConnectionStore {
+        val mutex = Mutex()
+        var connections: Connections? = null
+    }
 
     override fun createInitialState() = ConnectionsUiState()
 
-    private data class ConnectionState(
-        val foreground: Boolean,
-        val screenOn: Boolean,
-        val visibleCount: Int,
-        val status: Status,
-        val remoteServerId: Long?,
-        val remoteConnected: Boolean,
-    )
+    private data class SessionTarget(val connect: Boolean, val remoteServerId: Long?)
 
     init {
         viewModelScope.launch {
@@ -81,17 +73,21 @@ class ConnectionsViewModel :
                     RemoteControlManager.isConnected,
                 ) { remoteServer, remoteConnected -> remoteServer?.id to remoteConnected },
             ) { foreground, screenOn, visibleCount, status, (remoteServerId, remoteConnected) ->
-                ConnectionState(foreground, screenOn, visibleCount, status, remoteServerId, remoteConnected)
-            }.collect { state ->
                 val serviceReady =
-                    if (state.remoteServerId != null) state.remoteConnected else state.status == Status.Started
-                val shouldConnect = state.foreground && state.screenOn &&
-                    state.visibleCount > 0 && serviceReady
-                if (shouldConnect) {
-                    updateState { copy(isLoading = true) }
-                    commandClient.connect()
-                } else {
-                    commandClient.disconnect()
+                    if (remoteServerId != null) remoteConnected else status == Status.Started
+                SessionTarget(
+                    connect = foreground && screenOn && visibleCount > 0 && serviceReady,
+                    remoteServerId = remoteServerId,
+                )
+            }.distinctUntilChanged().collectLatest { target ->
+                clearConnections(loading = target.connect)
+                if (target.connect) {
+                    try {
+                        subscribe(target)
+                    } finally {
+                        // collectLatest waits for cancellation before starting the next target.
+                        clearConnections(loading = false)
+                    }
                 }
             }
         }
@@ -101,35 +97,74 @@ class ConnectionsViewModel :
         _visibleCount.value += if (visible) 1 else -1
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        commandClient.disconnect()
-    }
-
-    private suspend fun handleServiceStatusChange(status: Status) {
-        if (RemoteControlManager.remoteServer.value != null) {
-            return
-        }
-        if (status != Status.Started) {
-            withContext(Dispatchers.Default) {
-                connectionsMutex.withLock {
-                    connectionsStore = null
-                }
-                connectionsGeneration.incrementAndGet()
-            }
-            updateState {
-                copy(connections = emptyList(), allConnections = emptyList(), isLoading = false)
-            }
-        }
-    }
-
     fun updateServiceStatus(status: Status) {
-        if (status == lastServiceStatus) return
-        lastServiceStatus = status
-        viewModelScope.launch {
-            _serviceStatus.emit(status)
-            handleServiceStatusChange(status)
+        _serviceStatus.value = status
+    }
+
+    private fun clearConnections(loading: Boolean) {
+        activeStore = null
+        updateState {
+            copy(connections = emptyList(), allConnections = emptyList(), isLoading = loading)
         }
+    }
+
+    private suspend fun subscribe(target: SessionTarget) {
+        val subscription = ConnectionSubscription<ConnectionEvents>(createClient = { scope, listener ->
+            val client = CommandClient(
+                scope,
+                CommandClient.ConnectionType.Connections,
+                object : CommandClient.Handler {
+                    override fun writeConnectionEvents(events: ConnectionEvents) {
+                        listener.onEvent(events)
+                    }
+
+                    override fun onConnectionError(kind: CommandClient.ConnectionErrorKind, message: String) {
+                        listener.onFailure(
+                            ConnectionSubscription.Failure(
+                                message,
+                                retryable = isRetryableConnectionError(message) &&
+                                    (target.remoteServerId == null || kind == CommandClient.ConnectionErrorKind.ConnectionLost),
+                            ),
+                        )
+                    }
+                },
+                localOnly = target.remoteServerId == null,
+            )
+            object : ConnectionSubscription.Client {
+                override fun connect() = client.connect()
+                override fun disconnect() = client.disconnect()
+            }
+        })
+        subscription.collect(
+            createConsumer = {
+                val store = ConnectionStore()
+                activeStore = store
+                updateState { copy(isLoading = true) }
+                val consume: suspend (List<ConnectionEvents>) -> Unit = { events ->
+                    val snapshot = withContext(Dispatchers.Default) {
+                        store.mutex.withLock {
+                            if (store.connections == null) {
+                                // An empty reset is a valid first snapshot too.
+                                if (!events.first().reset) {
+                                    throw ConnectionSubscription.Failure("Missing initial connection snapshot")
+                                }
+                                store.connections = Connections()
+                            }
+                            val connections = checkNotNull(store.connections)
+                            events.forEach { connections.applyEvents(it) }
+                            buildConnectionLists(connections, uiState.value)
+                        }
+                    }
+                    publishConnections(store, snapshot)
+                }
+                consume
+            },
+            onFailure = { failure ->
+                clearConnections(loading = failure.retryable)
+                Log.d("ConnectionsViewModel", "Connection subscription failed", failure)
+                if (!failure.retryable) sendError(failure)
+            },
+        )
     }
 
     fun setStateFilter(filter: ConnectionStateFilter) {
@@ -186,77 +221,27 @@ class ConnectionsViewModel :
         }
     }
 
-    override fun onConnected() {
-        viewModelScope.launch(Dispatchers.Main) {
-            updateState { copy(isLoading = false) }
-        }
-    }
-
-    override fun onDisconnected() {
-        viewModelScope.launch(Dispatchers.Default) {
-            connectionsMutex.withLock {
-                connectionsStore = null
-            }
-            connectionsGeneration.incrementAndGet()
-            withContext(Dispatchers.Main) {
-                updateState {
-                    copy(connections = emptyList(), allConnections = emptyList(), isLoading = false)
-                }
-            }
-        }
-    }
-
-    override fun writeConnectionEvents(events: ConnectionEvents) {
-        viewModelScope.launch(Dispatchers.Default) {
-            val generation = connectionsGeneration.get()
-            val snapshot = connectionsMutex.withLock {
-                if (connectionsStore == null) {
-                    connectionsStore = Connections()
-                }
-                val store = connectionsStore ?: return@withLock null
-                store.applyEvents(events)
-                buildConnectionLists(store, uiState.value)
-            } ?: return@launch
-            if (connectionsGeneration.get() != generation) {
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                if (connectionsGeneration.get() != generation) {
-                    return@withContext
-                }
-                updateState {
-                    copy(
-                        connections = snapshot.connections,
-                        allConnections = snapshot.allConnections,
-                        isLoading = false,
-                    )
-                }
-            }
-        }
-    }
-
     private fun requestConnectionsRefresh() {
-        viewModelScope.launch(Dispatchers.Default) {
-            val generation = connectionsGeneration.get()
-            val snapshot = connectionsMutex.withLock {
-                val store = connectionsStore ?: return@withLock null
-                buildConnectionLists(store, uiState.value)
+        val store = activeStore ?: return
+        viewModelScope.launch {
+            val snapshot = withContext(Dispatchers.Default) {
+                store.mutex.withLock {
+                    val connections = store.connections ?: return@withLock null
+                    buildConnectionLists(connections, uiState.value)
+                }
             } ?: return@launch
-            if (connectionsGeneration.get() != generation) {
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                if (connectionsGeneration.get() != generation) {
-                    return@withContext
-                }
-                updateState {
-                    copy(
-                        connections = snapshot.connections,
-                        allConnections = snapshot.allConnections,
-                        isLoading = false,
-                    )
-                }
-            }
+            publishConnections(store, snapshot)
+        }
+    }
+
+    private fun publishConnections(store: ConnectionStore, snapshot: ConnectionLists) {
+        if (activeStore !== store) return
+        updateState {
+            copy(
+                connections = snapshot.connections,
+                allConnections = snapshot.allConnections,
+                isLoading = false,
+            )
         }
     }
 
