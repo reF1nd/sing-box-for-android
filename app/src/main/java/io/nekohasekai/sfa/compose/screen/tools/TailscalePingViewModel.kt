@@ -26,7 +26,11 @@ data class TailscalePingState(
 
 class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
     private val maxHistorySize = 30
+
+    @Volatile
     private var pingSession: TailscalePingSession? = null
+
+    @Volatile
     private var sessionGeneration = 0L
 
     override fun createInitialState() = TailscalePingState()
@@ -44,7 +48,7 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                pingSession =
+                val newSession =
                     CommandTarget.standaloneClient()
                         .startTailscalePing(
                             endpointTag,
@@ -87,6 +91,7 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
                                 }
                             },
                         )
+                setPingSession(generation, newSession)
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     if (!isCurrentSession(generation)) return@withContext
@@ -102,13 +107,31 @@ class TailscalePingViewModel : BaseViewModel<TailscalePingState, Nothing>() {
     }
 
     @OptIn(DelicateCoroutinesApi::class)
-    private fun closePingSession() {
-        val session = pingSession ?: return
-        pingSession = null
+    private fun closePingSession(session: TailscalePingSession) {
         GlobalScope.launch(Dispatchers.IO) {
             runCatching {
                 session.close()
             }
+        }
+    }
+
+    private fun closePingSession() {
+        val session = pingSession ?: return
+        pingSession = null
+        closePingSession(session)
+    }
+
+    private fun setPingSession(generation: Long, newSession: TailscalePingSession) {
+        if (!isCurrentSession(generation)) {
+            closePingSession(newSession)
+            return
+        }
+        pingSession = newSession
+        if (!isCurrentSession(generation)) {
+            if (pingSession === newSession) {
+                pingSession = null
+            }
+            closePingSession(newSession)
         }
     }
 
