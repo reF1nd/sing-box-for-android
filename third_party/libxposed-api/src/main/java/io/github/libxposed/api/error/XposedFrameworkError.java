@@ -1,9 +1,9 @@
-package io.github.libxposed.api.errors;
+package io.github.libxposed.api.error;
 
-/**
- * Thrown to indicate that the Xposed framework function is broken.
- */
 public class XposedFrameworkError extends Error {
+    public XposedFrameworkError() {
+        super();
+    }
 
     public XposedFrameworkError(String message) {
         super(message);

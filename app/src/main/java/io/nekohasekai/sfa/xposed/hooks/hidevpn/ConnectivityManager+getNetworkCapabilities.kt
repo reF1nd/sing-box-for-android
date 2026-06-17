@@ -3,8 +3,6 @@ package io.nekohasekai.sfa.xposed.hooks.hidevpn
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Binder
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.HookErrorStore
 import io.nekohasekai.sfa.xposed.VpnSanitizer
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
@@ -72,14 +70,14 @@ class HookConnectivityManagerGetNetworkCapabilities(private val helper: Connecti
     private fun hookNetworkCapabilitiesRestricted() {
         // Merged into createWithSensitiveInfoSanitizedIfNecessaryWhenParceled since the Android 16
         // QPR2 connectivity module.
-        val method = XposedHelpers.findMethodExactIfExists(
+        val method = helper.api.findMethodIfExists(
             helper.cls,
             "networkCapabilitiesRestrictedForCallerPermissions",
             NetworkCapabilities::class.java,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType!!,
+            Int::class.javaPrimitiveType!!,
         ) ?: return
-        XposedBridge.hookMethod(
+        helper.api.hook(
             method,
             object : SafeMethodHook(SOURCE) {
                 override fun afterHook(param: MethodHookParam) {
@@ -94,7 +92,7 @@ class HookConnectivityManagerGetNetworkCapabilities(private val helper: Connecti
     }
 
     private fun hookGetNetworkCapabilitiesV8() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getNetworkCapabilities",
             Network::class.java,
@@ -107,7 +105,7 @@ class HookConnectivityManagerGetNetworkCapabilities(private val helper: Connecti
     }
 
     private fun hookGetNetworkCapabilitiesV11() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getNetworkCapabilities",
             Network::class.java,
@@ -121,7 +119,7 @@ class HookConnectivityManagerGetNetworkCapabilities(private val helper: Connecti
     }
 
     private fun hookGetNetworkCapabilitiesV12() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getNetworkCapabilities",
             Network::class.java,
@@ -135,7 +133,7 @@ class HookConnectivityManagerGetNetworkCapabilities(private val helper: Connecti
         )
     }
 
-    private fun sanitizeNetworkCapabilitiesResult(param: de.robv.android.xposed.XC_MethodHook.MethodHookParam) {
+    private fun sanitizeNetworkCapabilitiesResult(param: MethodHookParam) {
         val uid = Binder.getCallingUid()
         if (!helper.shouldHide(param.thisObject, uid)) return
         val nc = param.result as? NetworkCapabilities ?: return
@@ -146,26 +144,26 @@ class HookConnectivityManagerGetNetworkCapabilities(private val helper: Connecti
     private fun hookCreateWithSanitizedInfo() {
         // Renamed from createWithLocationInfoSanitizedIfNecessaryWhenParceled in the Android 16
         // QPR2 connectivity module.
-        val method = XposedHelpers.findMethodExactIfExists(
+        val method = helper.api.findMethodIfExists(
             helper.cls,
             "createWithSensitiveInfoSanitizedIfNecessaryWhenParceled",
             NetworkCapabilities::class.java,
-            Boolean::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
+            Boolean::class.javaPrimitiveType!!,
+            Int::class.javaPrimitiveType!!,
+            Int::class.javaPrimitiveType!!,
             String::class.java,
             String::class.java,
-        ) ?: XposedHelpers.findMethodExact(
+        ) ?: helper.api.findMethod(
             helper.cls,
             "createWithLocationInfoSanitizedIfNecessaryWhenParceled",
             NetworkCapabilities::class.java,
-            Boolean::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
+            Boolean::class.javaPrimitiveType!!,
+            Int::class.javaPrimitiveType!!,
+            Int::class.javaPrimitiveType!!,
             String::class.java,
             String::class.java,
         )
-        XposedBridge.hookMethod(
+        helper.api.hook(
             method,
             object : SafeMethodHook(SOURCE) {
                 override fun afterHook(param: MethodHookParam) {
