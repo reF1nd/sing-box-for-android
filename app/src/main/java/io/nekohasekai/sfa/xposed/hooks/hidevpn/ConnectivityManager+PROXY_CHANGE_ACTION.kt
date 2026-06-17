@@ -6,7 +6,6 @@ import android.net.Proxy
 import android.net.ProxyInfo
 import android.os.Binder
 import android.os.UserHandle
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.HookErrorStore
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
 
@@ -34,13 +33,13 @@ class HookConnectivityManagerProxyChangeAction(private val helper: ConnectivityS
 
     private fun hookProxyBroadcastTracker() {
         val trackerClass = helper.resolveConnectivityModuleClass("ProxyTracker", "connectivity")
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             trackerClass,
             "sendProxyBroadcast",
             object : SafeMethodHook(SOURCE) {
                 override fun beforeHook(param: MethodHookParam) {
                     val tracker = param.thisObject ?: return
-                    val context = XposedHelpers.getObjectField(tracker, "mContext") as Context
+                    val context = helper.api.getObjectField(tracker, "mContext") as Context
                     val proxyInfo = emptyProxyInfo()
                     val intent = Intent(Proxy.PROXY_CHANGE_ACTION)
                     intent.addFlags(Intent.FLAG_RECEIVER_REPLACE_PENDING)
@@ -67,7 +66,7 @@ class HookConnectivityManagerProxyChangeAction(private val helper: ConnectivityS
     }
 
     private fun hookLegacyProxyBroadcast() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "sendProxyBroadcast",
             ProxyInfo::class.java,
