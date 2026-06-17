@@ -4,7 +4,6 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.os.Binder
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.HookErrorStore
 import io.nekohasekai.sfa.xposed.VpnSanitizer
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
@@ -37,7 +36,7 @@ class HookConnectivityManagerGetLinkProperties(private val helper: ConnectivityS
     }
 
     private fun hookLinkPropertiesRestricted() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "linkPropertiesRestrictedForCallerPermissions",
             LinkProperties::class.java,
@@ -57,7 +56,7 @@ class HookConnectivityManagerGetLinkProperties(private val helper: ConnectivityS
     }
 
     private fun hookGetLinkProperties() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getLinkProperties",
             Network::class.java,
@@ -75,7 +74,7 @@ class HookConnectivityManagerGetLinkProperties(private val helper: ConnectivityS
     }
 
     private fun hookGetLinkPropertiesForType() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getLinkPropertiesForType",
             Int::class.javaPrimitiveType,

@@ -3,16 +3,15 @@ package io.nekohasekai.sfa.xposed.hooks.hidevpn
 import android.net.NetworkCapabilities
 import android.os.Binder
 import android.os.Parcel
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.HookErrorStore
 import io.nekohasekai.sfa.xposed.HookStatusStore
 import io.nekohasekai.sfa.xposed.VpnHideContext
 import io.nekohasekai.sfa.xposed.VpnSanitizer
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
 import io.nekohasekai.sfa.xposed.hooks.XHook
+import io.nekohasekai.sfa.xposed.hooks.XposedApi
 
-class HookNetworkCapabilitiesWriteToParcel : XHook {
+class HookNetworkCapabilitiesWriteToParcel(private val api: XposedApi) : XHook {
     private companion object {
         private const val SOURCE = "HookNCWriteToParcel"
     }
@@ -39,7 +38,7 @@ class HookNetworkCapabilitiesWriteToParcel : XHook {
     private val inWrite = ThreadLocal.withInitial { false }
 
     override fun injectHook() {
-        XposedHelpers.findAndHookMethod(
+        api.findAndHookMethod(
             NetworkCapabilities::class.java,
             "writeToParcel",
             Parcel::class.java,
@@ -63,7 +62,7 @@ class HookNetworkCapabilitiesWriteToParcel : XHook {
                     HookStatusStore.markPatched()
                     inWrite.set(true)
                     try {
-                        XposedBridge.invokeOriginalMethod(param.method, sanitized, param.args)
+                        api.invokeOriginal(param.method, sanitized, param.args)
                         param.result = null
                     } finally {
                         inWrite.set(false)
@@ -93,7 +92,7 @@ class HookNetworkCapabilitiesWriteToParcel : XHook {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
             return
         }
-        val field = XposedHelpers.findField(NetworkCapabilities::class.java, "mTransportInfo")
+        val field = api.findField(NetworkCapabilities::class.java, "mTransportInfo")
         val info = field.get(caps) ?: return
         if (info.javaClass.name.contains("VpnTransportInfo")) {
             field.set(caps, null)
@@ -102,10 +101,10 @@ class HookNetworkCapabilitiesWriteToParcel : XHook {
 
     private fun clearUnderlyingNetworks(caps: NetworkCapabilities) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            val field = XposedHelpers.findField(NetworkCapabilities::class.java, "mUnderlyingNetworks")
+            val field = api.findField(NetworkCapabilities::class.java, "mUnderlyingNetworks")
             field.set(caps, null)
         } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            val field = XposedHelpers.findFieldIfExists(NetworkCapabilities::class.java, "mUnderlyingNetworks")
+            val field = api.findFieldIfExists(NetworkCapabilities::class.java, "mUnderlyingNetworks")
             field?.set(caps, null)
         }
     }
@@ -114,7 +113,7 @@ class HookNetworkCapabilitiesWriteToParcel : XHook {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
             return
         }
-        val field = XposedHelpers.findField(NetworkCapabilities::class.java, "mOwnerUid")
+        val field = api.findField(NetworkCapabilities::class.java, "mOwnerUid")
         field.setInt(caps, android.os.Process.INVALID_UID)
     }
 }
