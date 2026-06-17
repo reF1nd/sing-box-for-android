@@ -2,7 +2,6 @@ package io.nekohasekai.sfa.xposed.hooks.hidevpn
 
 import android.net.Network
 import android.os.Binder
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
 
 class HookConnectivityManagerGetAllNetworks(private val helper: ConnectivityServiceHookHelper) {
@@ -11,7 +10,7 @@ class HookConnectivityManagerGetAllNetworks(private val helper: ConnectivityServ
     }
 
     fun install() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getAllNetworks",
             object : SafeMethodHook(SOURCE) {
