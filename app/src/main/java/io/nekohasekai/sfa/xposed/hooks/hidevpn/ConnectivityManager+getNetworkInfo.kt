@@ -4,7 +4,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkInfo
 import android.os.Binder
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.VpnSanitizer
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
 
@@ -14,7 +13,7 @@ class HookConnectivityManagerGetNetworkInfo(private val helper: ConnectivityServ
     }
 
     fun install() {
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getNetworkInfo",
             Int::class.javaPrimitiveType,
@@ -29,7 +28,7 @@ class HookConnectivityManagerGetNetworkInfo(private val helper: ConnectivityServ
             },
         )
 
-        XposedHelpers.findAndHookMethod(
+        helper.api.findAndHookMethod(
             helper.cls,
             "getNetworkInfoForUid",
             Network::class.java,
