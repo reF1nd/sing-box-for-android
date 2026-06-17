@@ -25,3 +25,7 @@
 -keep class android.content.IIntentReceiver { *; }
 -keep class android.content.IIntentSender { *; }
 -keep class android.content.IIntentSender$Stub { *; }
+
+-dontwarn io.github.libxposed.annotation.**
+-keep class io.nekohasekai.sfa.xposed.XposedInit { public *; }
+-keep class io.nekohasekai.sfa.xposed.XposedLegacyInit { public *; }

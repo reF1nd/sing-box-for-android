@@ -1,10 +1,9 @@
-package io.github.libxposed.api.errors;
+package io.github.libxposed.api.error;
 
-/**
- * Thrown to indicate that a hook failed due to framework internal error.
- */
-@SuppressWarnings("unused")
 public class HookFailedError extends XposedFrameworkError {
+    public HookFailedError() {
+        super();
+    }
 
     public HookFailedError(String message) {
         super(message);

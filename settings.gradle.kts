@@ -10,8 +10,18 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = "Xposed"
+                    url = uri("https://api.xposed.info/")
+                }
+            }
+            filter {
+                includeGroup("de.robv.android.xposed")
+            }
+        }
         maven { url = uri("https://jitpack.io") }
-        maven { url = uri("https://api.xposed.info/") }
     }
 }
 rootProject.name = "sing-box"
