@@ -2,23 +2,16 @@ package io.nekohasekai.sfa.xposed
 
 import java.io.File
 import java.lang.reflect.Method
+import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 
 object PrivilegeSettingsStore {
     private const val SETTINGS_DIR = "/data/system/sing-box"
     private const val SETTINGS_FILE = "privilege_settings.conf"
+    private const val SETTINGS_VERSION = "1"
 
     @Volatile
-    private var enabled = false
-
-    @Volatile
-    private var packageSet: Set<String> = emptySet()
-
-    @Volatile
-    private var interfaceRenameEnabled = false
-
-    @Volatile
-    private var interfacePrefix = "en"
+    private var state = State()
     private val uidCache = ConcurrentHashMap<Int, Boolean>()
 
     private val appGlobalsClass by lazy { Class.forName("android.app.AppGlobals") }
@@ -26,36 +19,61 @@ object PrivilegeSettingsStore {
     private var getPackagesForUidMethod: Method? = null
 
     fun update(enabled: Boolean, packages: Set<String>, interfaceRenameEnabled: Boolean, interfacePrefix: String) {
-        this.enabled = enabled
-        packageSet = packages
-        this.interfaceRenameEnabled = interfaceRenameEnabled
-        this.interfacePrefix = normalizePrefix(interfacePrefix)
-        uidCache.clear()
-        HookErrorStore.i(
-            "PrivilegeSettingsStore",
-            "PrivilegeSettings updated: enabled=$enabled size=${packages.size} rename=$interfaceRenameEnabled prefix=${this.interfacePrefix}",
+        val newState = State(
+            enabled = enabled,
+            packageSet = packages.toSet(),
+            interfaceRenameEnabled = interfaceRenameEnabled,
+            interfacePrefix = normalizePrefix(interfacePrefix),
         )
-        writeSettingsFile()
+        applyState(newState, "updated")
+        writeSettingsFile(newState)
     }
 
-    fun isEnabled(): Boolean = enabled
+    fun loadFromDisk() {
+        val file = File(SETTINGS_DIR, SETTINGS_FILE)
+        if (!file.isFile) return
+        try {
+            val properties = Properties()
+            file.bufferedReader().use(properties::load)
+            if (properties.getProperty("version") != SETTINGS_VERSION) {
+                HookErrorStore.w("PrivilegeSettingsStore", "Ignoring unsupported privilege settings version")
+                return
+            }
+            val newState = State(
+                enabled = parseFlag(properties, "enabled"),
+                packageSet = properties.getProperty("packages")
+                    ?.split(',')
+                    ?.filterTo(LinkedHashSet()) { it.isNotBlank() }
+                    ?: throw IllegalArgumentException("missing packages"),
+                interfaceRenameEnabled = parseFlag(properties, "rename"),
+                interfacePrefix = normalizePrefix(
+                    properties.getProperty("prefix") ?: throw IllegalArgumentException("missing prefix"),
+                ),
+            )
+            applyState(newState, "restored")
+        } catch (e: Throwable) {
+            HookErrorStore.e("PrivilegeSettingsStore", "Failed to load privilege settings file", e)
+        }
+    }
 
-    fun shouldRenameInterface(): Boolean = interfaceRenameEnabled
+    fun isEnabled(): Boolean = state.enabled
 
-    fun interfacePrefix(): String = interfacePrefix
+    fun shouldRenameInterface(): Boolean = state.interfaceRenameEnabled
+
+    fun interfacePrefix(): String = state.interfacePrefix
 
     fun isUidSelected(uid: Int): Boolean {
         val cached = uidCache[uid]
         if (cached != null) {
             return cached
         }
-        val selected = getPackagesForUid(uid).any { packageSet.contains(it) }
+        val selected = getPackagesForUid(uid).any { state.packageSet.contains(it) }
         uidCache[uid] = selected
         return selected
     }
 
     fun shouldHideUid(uid: Int): Boolean {
-        if (!enabled) {
+        if (!state.enabled) {
             return false
         }
         return isUidSelected(uid)
@@ -76,7 +94,23 @@ object PrivilegeSettingsStore {
         return if (filtered.isEmpty()) "en" else filtered
     }
 
-    private fun writeSettingsFile() {
+    private fun parseFlag(properties: Properties, key: String): Boolean = when (properties.getProperty(key)) {
+        "1" -> true
+        "0" -> false
+        else -> throw IllegalArgumentException("invalid $key")
+    }
+
+    private fun applyState(newState: State, action: String) {
+        state = newState
+        uidCache.clear()
+        HookErrorStore.i(
+            "PrivilegeSettingsStore",
+            "PrivilegeSettings $action: enabled=${newState.enabled} size=${newState.packageSet.size} " +
+                "rename=${newState.interfaceRenameEnabled} prefix=${newState.interfacePrefix}",
+        )
+    }
+
+    private fun writeSettingsFile(state: State) {
         try {
             val dir = File(SETTINGS_DIR)
             if (!dir.exists() && !dir.mkdirs()) {
@@ -84,17 +118,19 @@ object PrivilegeSettingsStore {
                 return
             }
             val file = File(dir, SETTINGS_FILE)
-            val packagesLine = packageSet.sorted().joinToString(",")
+            val packagesLine = state.packageSet.sorted().joinToString(",")
             val content = buildString {
-                append("version=1\n")
+                append("version=")
+                append(SETTINGS_VERSION)
+                append('\n')
                 append("enabled=")
-                append(if (enabled) "1" else "0")
+                append(if (state.enabled) "1" else "0")
                 append('\n')
                 append("rename=")
-                append(if (interfaceRenameEnabled) "1" else "0")
+                append(if (state.interfaceRenameEnabled) "1" else "0")
                 append('\n')
                 append("prefix=")
-                append(interfacePrefix)
+                append(state.interfacePrefix)
                 append('\n')
                 append("packages=")
                 append(packagesLine)
@@ -107,6 +143,13 @@ object PrivilegeSettingsStore {
             HookErrorStore.e("PrivilegeSettingsStore", "Failed to write privilege settings file", e)
         }
     }
+
+    private data class State(
+        val enabled: Boolean = false,
+        val packageSet: Set<String> = emptySet(),
+        val interfaceRenameEnabled: Boolean = false,
+        val interfacePrefix: String = "en",
+    )
 
     private fun getPackagesForUid(uid: Int): List<String> {
         val pm = getPackageManager() ?: return emptyList()
