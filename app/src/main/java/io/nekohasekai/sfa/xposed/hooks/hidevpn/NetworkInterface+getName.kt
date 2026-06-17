@@ -3,18 +3,18 @@ package io.nekohasekai.sfa.xposed.hooks.hidevpn
 import android.system.Os
 import android.system.OsConstants
 import android.system.StructTimeval
-import de.robv.android.xposed.XposedHelpers
 import io.nekohasekai.sfa.xposed.HookErrorStore
 import io.nekohasekai.sfa.xposed.PrivilegeSettingsStore
 import io.nekohasekai.sfa.xposed.hooks.SafeMethodHook
 import io.nekohasekai.sfa.xposed.hooks.XHook
+import io.nekohasekai.sfa.xposed.hooks.XposedApi
 import java.io.FileDescriptor
 import java.net.SocketAddress
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicInteger
 
-class HookNetworkInterfaceGetName(private val classLoader: ClassLoader) : XHook {
+class HookNetworkInterfaceGetName(private val api: XposedApi, private val classLoader: ClassLoader) : XHook {
     private companion object {
         private const val SOURCE = "HookNetworkInterfaceGetName"
         private const val MAX_NAME_LEN = 15
@@ -38,8 +38,8 @@ class HookNetworkInterfaceGetName(private val classLoader: ClassLoader) : XHook 
     private val seq = AtomicInteger(1)
 
     override fun injectHook() {
-        val vpnClass = XposedHelpers.findClass("com.android.server.connectivity.Vpn", classLoader)
-        XposedHelpers.findAndHookMethod(
+        val vpnClass = api.findClass("com.android.server.connectivity.Vpn", classLoader)
+        api.findAndHookMethod(
             vpnClass,
             "jniGetName",
             Int::class.javaPrimitiveType,
@@ -176,15 +176,24 @@ class HookNetworkInterfaceGetName(private val classLoader: ClassLoader) : XHook 
 
     private fun openNetlinkSocket(): FileDescriptor {
         val fd = Os.socket(OsConstants.AF_NETLINK, OsConstants.SOCK_RAW, OsConstants.NETLINK_ROUTE)
-        Os.setsockoptTimeval(
-            fd,
-            OsConstants.SOL_SOCKET,
-            OsConstants.SO_RCVTIMEO,
-            StructTimeval.fromMillis(200),
-        )
-        val address = buildNetlinkAddress()
-        Os.connect(fd, address)
-        return fd
+        try {
+            Os.setsockoptTimeval(
+                fd,
+                OsConstants.SOL_SOCKET,
+                OsConstants.SO_RCVTIMEO,
+                StructTimeval.fromMillis(200),
+            )
+            val address = buildNetlinkAddress()
+            Os.connect(fd, address)
+            return fd
+        } catch (e: Throwable) {
+            try {
+                Os.close(fd)
+            } catch (closeError: Throwable) {
+                e.addSuppressed(closeError)
+            }
+            throw e
+        }
     }
 
     private fun buildNetlinkAddress(): SocketAddress = netlinkSocketAddressCtor.newInstance(0, 0) as SocketAddress
