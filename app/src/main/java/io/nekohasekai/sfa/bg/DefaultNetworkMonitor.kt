@@ -1,33 +1,51 @@
 package io.nekohasekai.sfa.bg
 
+import android.net.LinkProperties
 import android.net.Network
 import android.os.Build
+import android.util.Log
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.sfa.Application
 import java.net.NetworkInterface
+import java.util.concurrent.atomic.AtomicReference
 
 object DefaultNetworkMonitor {
+    private const val TAG = "DefaultNetworkMonitor"
 
-    @Volatile
-    var defaultNetwork: Network? = null
+    private data class DefaultNetworkState(
+        val network: Network? = null,
+        val linkProperties: LinkProperties? = null,
+    )
+
+    private val defaultNetworkState = AtomicReference(DefaultNetworkState())
+    val defaultNetwork: Network?
+        get() = defaultNetworkState.get().network
+
     @Volatile
     private var listener: InterfaceUpdateListener? = null
 
     suspend fun start() {
-        DefaultNetworkListener.start(this) {
-            defaultNetwork = it
-            checkDefaultInterfaceUpdate(it)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val currentNetwork = Application.connectivity.activeNetwork
+            defaultNetworkState.set(
+                DefaultNetworkState(
+                    currentNetwork,
+                    currentNetwork?.let(Application.connectivity::getLinkProperties),
+                ),
+            )
         }
-        defaultNetwork = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Application.connectivity.activeNetwork
-        } else {
+        DefaultNetworkListener.start(this) { network, linkProperties ->
+            defaultNetworkState.set(DefaultNetworkState(network, linkProperties))
+            checkDefaultInterfaceUpdate(network, linkProperties)
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             DefaultNetworkListener.get()
         }
     }
 
     suspend fun stop() {
         DefaultNetworkListener.stop(this)
-        defaultNetwork = null
+        defaultNetworkState.set(DefaultNetworkState())
         listener = null
     }
 
@@ -41,30 +59,28 @@ object DefaultNetworkMonitor {
 
     fun setListener(listener: InterfaceUpdateListener?) {
         this.listener = listener
-        checkDefaultInterfaceUpdate(defaultNetwork)
+        val state = defaultNetworkState.get()
+        checkDefaultInterfaceUpdate(state.network, state.linkProperties)
     }
 
-    private fun checkDefaultInterfaceUpdate(newNetwork: Network?) {
+    private fun checkDefaultInterfaceUpdate(newNetwork: Network?, linkProperties: LinkProperties?) {
         val listener = listener ?: return
-        if (newNetwork != null) {
-            for (times in 0 until 10) {
-                val linkProperties = Application.connectivity.getLinkProperties(newNetwork)
-                if (linkProperties == null) {
-                    Thread.sleep(100)
-                    continue
-                }
-                var interfaceIndex: Int
+        if (newNetwork == null) {
+            listener.updateDefaultInterface("", -1, false, false)
+            return
+        }
+        val interfaceName = linkProperties?.interfaceName ?: return
+        repeat(10) {
+            val interfaceIndex =
                 try {
-                    interfaceIndex = NetworkInterface.getByName(linkProperties.interfaceName).index
+                    NetworkInterface.getByName(interfaceName).index
                 } catch (e: Exception) {
                     Thread.sleep(100)
-                    continue
+                    return@repeat
                 }
-                listener.updateDefaultInterface(linkProperties.interfaceName, interfaceIndex, false, false)
-                return
-            }
-        } else {
-            listener.updateDefaultInterface("", -1, false, false)
+            listener.updateDefaultInterface(interfaceName, interfaceIndex, false, false)
+            return
         }
+        Log.w(TAG, "failed to resolve interface index for $interfaceName")
     }
 }
