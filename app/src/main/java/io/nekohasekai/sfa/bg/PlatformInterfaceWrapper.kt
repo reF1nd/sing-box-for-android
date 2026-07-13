@@ -100,12 +100,19 @@ interface PlatformInterfaceWrapper : PlatformInterface {
     override fun getInterfaces(): NetworkInterfaceIterator {
         val networks = Application.connectivity.allNetworks
         val networkInterfaces = NetworkInterface.getNetworkInterfaces().toList()
+        val defaultNetworkSnapshot = DefaultNetworkMonitor.currentState()
         val interfaces = mutableListOf<LibboxNetworkInterface>()
         for (network in networks) {
             val boxInterface = LibboxNetworkInterface()
-            val linkProperties = Application.connectivity.getLinkProperties(network) ?: continue
+            val isDefaultNetwork = network == defaultNetworkSnapshot.network
+            val linkProperties =
+                (if (isDefaultNetwork) defaultNetworkSnapshot.linkProperties else null)
+                    ?: Application.connectivity.getLinkProperties(network)
+                    ?: continue
             val networkCapabilities =
-                Application.connectivity.getNetworkCapabilities(network) ?: continue
+                (if (isDefaultNetwork) defaultNetworkSnapshot.networkCapabilities else null)
+                    ?: Application.connectivity.getNetworkCapabilities(network)
+                    ?: continue
             boxInterface.name = linkProperties.interfaceName
             val networkInterface =
                 networkInterfaces.find { it.name == boxInterface.name } ?: continue
