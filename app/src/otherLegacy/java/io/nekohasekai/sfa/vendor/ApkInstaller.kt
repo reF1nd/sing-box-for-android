@@ -2,6 +2,7 @@ package io.nekohasekai.sfa.vendor
 
 import android.content.Context
 import io.nekohasekai.sfa.Application
+import io.nekohasekai.sfa.bg.BoxService
 import io.nekohasekai.sfa.bg.RootClient
 import io.nekohasekai.sfa.database.Settings
 import io.nekohasekai.sfa.utils.HookStatusClient
@@ -30,9 +31,14 @@ object ApkInstaller {
     }
 
     suspend fun install(context: Context, apkFile: File, method: InstallMethod = getConfiguredMethod()) {
+        BoxService.stopAndWait()
         when (method) {
             InstallMethod.ROOT -> RootInstaller.install(apkFile)
-            InstallMethod.PACKAGE_INSTALLER -> SystemPackageInstaller.install(context, apkFile)
+            InstallMethod.PACKAGE_INSTALLER -> SystemPackageInstaller.install(
+                context,
+                apkFile,
+                Settings.silentInstallEnabled && Settings.silentInstallMethod == InstallMethod.PACKAGE_INSTALLER.name,
+            )
         }
     }
 
