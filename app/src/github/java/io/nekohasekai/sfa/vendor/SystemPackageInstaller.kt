@@ -4,20 +4,28 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import io.nekohasekai.sfa.Application
 import java.io.File
 import java.io.FileInputStream
 import android.content.pm.PackageInstaller as AndroidPackageInstaller
 
 object SystemPackageInstaller {
 
-    fun canSystemSilentInstall(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    fun canSystemSilentInstall(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+        Application.application.packageManager.canRequestPackageInstalls()
 
-    fun install(context: Context, apkFile: File) {
+    fun install(context: Context, apkFile: File, silent: Boolean) {
         val packageInstaller = context.packageManager.packageInstaller
         val params = AndroidPackageInstaller.SessionParams(AndroidPackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(context.packageName)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            params.setRequireUserAction(AndroidPackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            params.setRequireUserAction(
+                if (silent) {
+                    AndroidPackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED
+                } else {
+                    AndroidPackageInstaller.SessionParams.USER_ACTION_REQUIRED
+                },
+            )
         }
 
         val sessionId = packageInstaller.createSession(params)
