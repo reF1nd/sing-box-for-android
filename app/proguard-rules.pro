@@ -19,3 +19,9 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# These compile-time stubs must retain their framework names so the boot
+# classloader resolves Android's real hidden Binder interfaces at runtime.
+-keep class android.content.IIntentReceiver { *; }
+-keep class android.content.IIntentSender { *; }
+-keep class android.content.IIntentSender$Stub { *; }

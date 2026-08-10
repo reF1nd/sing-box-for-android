@@ -330,6 +330,7 @@
 
     <!-- Errors -->
     <string name="error_title">错误</string>
+    <string name="error_stop_vpn_timeout">VPN 服务未能及时停止</string>
     <string name="error_missing_vpn_permission">缺少 VPN 权限</string>
     <string name="error_empty_configuration">空配置</string>
     <string name="error_empty_file">空文件</string>

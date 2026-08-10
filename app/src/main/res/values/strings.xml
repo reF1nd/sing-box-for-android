@@ -333,6 +333,7 @@
 
     <!-- Errors -->
     <string name="error_title">Error</string>
+    <string name="error_stop_vpn_timeout">VPN service did not stop in time</string>
     <string name="error_missing_vpn_permission">Missiong VPN permission</string>
     <string name="error_empty_configuration">Empty configuration</string>
     <string name="error_empty_file">Empty file</string>

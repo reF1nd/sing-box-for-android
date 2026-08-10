@@ -335,6 +335,7 @@
 
     <!-- Errors -->
     <string name="error_title">Ошибка</string>
+    <string name="error_stop_vpn_timeout">Не удалось вовремя остановить службу VPN</string>
     <string name="error_missing_vpn_permission">Отсутствует разрешение на VPN</string>
     <string name="error_empty_configuration">Пустая конфигурация</string>
     <string name="error_empty_file">Пустой файл</string>
