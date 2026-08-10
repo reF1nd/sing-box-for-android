@@ -21,3 +21,9 @@
 #-renamesourcefileattribute SourceFile
 
 -keep class com.itsaky.androidide.treesitter.** { *; }
+
+# These compile-time stubs must retain their framework names so the boot
+# classloader resolves Android's real hidden Binder interfaces at runtime.
+-keep class android.content.IIntentReceiver { *; }
+-keep class android.content.IIntentSender { *; }
+-keep class android.content.IIntentSender$Stub { *; }

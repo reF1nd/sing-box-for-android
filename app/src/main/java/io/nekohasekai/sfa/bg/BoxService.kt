@@ -43,6 +43,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -66,6 +67,17 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                     Application.application.packageName,
                 ),
             )
+        }
+
+        suspend fun stopAndWait() {
+            val commandSocket = File(Application.application.filesDir, "command.sock")
+            if (!commandSocket.exists()) return
+            stop()
+            repeat(20) {
+                delay(100)
+                if (!commandSocket.exists()) return
+            }
+            error(Application.application.getString(R.string.error_stop_vpn_timeout))
         }
     }
 
