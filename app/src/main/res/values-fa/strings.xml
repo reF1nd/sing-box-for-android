@@ -334,6 +334,7 @@
 
     <!-- Errors -->
     <string name="error_title">خطا</string>
+    <string name="error_stop_vpn_timeout">سرویس VPN به‌موقع متوقف نشد</string>
     <string name="error_missing_vpn_permission">مجوز VPN وجود ندارد</string>
     <string name="error_empty_configuration">پیکربندی خالی است</string>
     <string name="error_empty_file">فایل خالی است</string>
