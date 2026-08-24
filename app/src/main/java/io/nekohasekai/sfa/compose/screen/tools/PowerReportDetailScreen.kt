@@ -92,11 +92,16 @@ fun PowerReportDetailScreen(navController: NavController, reportId: String) {
         }
     }
 
-    LaunchedEffect(report) {
-        if (report != null) {
-            files = withContext(Dispatchers.IO) {
+    LaunchedEffect(report?.id) {
+        isLoading = true
+        files = if (report != null) {
+            withContext(Dispatchers.IO) {
                 PowerReportManager.availableFiles(report)
             }
+        } else {
+            emptyList()
+        }
+        if (report != null) {
             PowerReportManager.markAsRead(report)
         }
         isLoading = false
@@ -108,8 +113,8 @@ fun PowerReportDetailScreen(navController: NavController, reportId: String) {
         reportId
     }
 
-    val hasConfig = report != null && PowerReportManager.hasConfigFile(report)
-    val hasLog = report != null && PowerReportManager.hasLogFile(report)
+    val hasConfig = files.any { it.kind == PowerReportFile.Kind.CONFIG }
+    val hasLog = files.any { it.kind == PowerReportFile.Kind.GO_LOG }
 
     fun shareReport(includeConfig: Boolean, includeLog: Boolean, useAgeEncryption: Boolean) {
         val currentReport = report ?: return
@@ -285,11 +290,14 @@ fun PowerReportMetadataScreen(navController: NavController, reportId: String) {
     var entries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
-    LaunchedEffect(report) {
-        if (report != null) {
-            entries = withContext(Dispatchers.IO) {
+    LaunchedEffect(report?.id) {
+        isLoading = true
+        entries = if (report != null) {
+            withContext(Dispatchers.IO) {
                 loadPowerMetadataEntries(report)
             }
+        } else {
+            emptyList()
         }
         isLoading = false
     }
@@ -394,16 +402,22 @@ fun PowerReportFileContentScreen(navController: NavController, reportId: String,
 
     val kind = runCatching { PowerReportFile.Kind.valueOf(fileKind) }.getOrNull()
 
-    LaunchedEffect(report, kind) {
-        if (report != null && kind != null) {
-            val loadedFile = withContext(Dispatchers.IO) {
+    LaunchedEffect(report?.id, kind) {
+        isLoading = true
+        val loadedFile = if (report != null && kind != null) {
+            withContext(Dispatchers.IO) {
                 val file = PowerReportManager.availableFiles(report).find { it.kind == kind }
                 file?.let { it.displayName to PowerReportManager.loadFileContent(it) }
             }
-            if (loadedFile != null) {
-                displayName = loadedFile.first
-                content = loadedFile.second
-            }
+        } else {
+            null
+        }
+        if (loadedFile != null) {
+            displayName = loadedFile.first
+            content = loadedFile.second
+        } else {
+            displayName = fileKind
+            content = ""
         }
         isLoading = false
     }
