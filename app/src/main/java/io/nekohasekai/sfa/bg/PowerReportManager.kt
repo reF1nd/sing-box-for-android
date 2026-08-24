@@ -5,6 +5,8 @@ import io.nekohasekai.sfa.Application
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -47,11 +49,9 @@ object PowerReportManager {
     private const val POWER_REPORTS_DIR_NAME = "power_reports"
     private const val CONTENT_TAIL_LIMIT = 512L * 1024L
 
-    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd'T'HH-mm-ss", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
-
     private lateinit var workingDir: File
+    private val reportsMutex = Mutex()
+    private val reportFilesMutex = Mutex()
 
     private val _reports = MutableStateFlow<List<PowerReport>>(emptyList())
     val reports: StateFlow<List<PowerReport>> = _reports
@@ -63,9 +63,9 @@ object PowerReportManager {
     }
 
     suspend fun refresh() = withContext(Dispatchers.IO) {
-        val reports = scanReports()
-        _reports.value = reports
-        _unreadCount.value = reports.count { !it.isRead }
+        reportsMutex.withLock {
+            publishReports(scanReports())
+        }
     }
 
     private fun scanReports(): List<PowerReport> {
@@ -130,49 +130,59 @@ object PowerReportManager {
         return content
     }
 
-    fun markAsRead(report: PowerReport) {
-        File(report.directory, READ_MARKER_FILE_NAME).createNewFile()
-        val updated = _reports.value.map {
-            if (it.id == report.id) it.copy(isRead = true) else it
+    suspend fun markAsRead(report: PowerReport) = withContext(Dispatchers.IO) {
+        reportsMutex.withLock {
+            if (!report.directory.isDirectory) return@withLock
+            val readMarker = File(report.directory, READ_MARKER_FILE_NAME)
+            if (!readMarker.exists()) {
+                readMarker.createNewFile()
+            }
+            if (_reports.value.none { it.id == report.id && !it.isRead }) return@withLock
+            publishReports(
+                _reports.value.map {
+                    if (it.id == report.id) it.copy(isRead = true) else it
+                },
+            )
         }
-        _reports.value = updated
-        _unreadCount.value = updated.count { !it.isRead }
     }
 
     suspend fun delete(report: PowerReport) = withContext(Dispatchers.IO) {
-        report.directory.deleteRecursively()
-        val updated = _reports.value.filter { it.id != report.id }
-        _reports.value = updated
-        _unreadCount.value = updated.count { !it.isRead }
+        reportFilesMutex.withLock {
+            reportsMutex.withLock {
+                report.directory.deleteRecursively()
+                publishReports(_reports.value.filter { it.id != report.id })
+            }
+        }
     }
 
     suspend fun deleteAll() = withContext(Dispatchers.IO) {
-        File(workingDir, POWER_REPORTS_DIR_NAME).deleteRecursively()
-        _reports.value = emptyList()
-        _unreadCount.value = 0
+        reportFilesMutex.withLock {
+            reportsMutex.withLock {
+                File(workingDir, POWER_REPORTS_DIR_NAME).deleteRecursively()
+                publishReports(emptyList())
+            }
+        }
     }
 
-    fun hasConfigFile(report: PowerReport): Boolean = File(report.directory, CONFIG_FILE_NAME).exists()
-
-    fun hasLogFile(report: PowerReport): Boolean = File(report.directory, GO_LOG_FILE_NAME).exists()
-
     suspend fun createZipArchive(report: PowerReport, includeConfig: Boolean, includeLog: Boolean, useAgeEncryption: Boolean): File = withContext(Dispatchers.IO) {
-        val cacheDir = File(Application.application.cacheDir, POWER_REPORTS_DIR_NAME)
-        cacheDir.mkdirs()
-        val zipFile = File(cacheDir, if (useAgeEncryption) "${report.id}.zip.age" else "${report.id}.zip")
-        zipFile.delete()
-        val strippedDir = File(cacheDir, report.id)
-        strippedDir.deleteRecursively()
-        report.directory.copyRecursively(strippedDir, overwrite = true)
-        File(strippedDir, READ_MARKER_FILE_NAME).delete()
-        if (!includeConfig) {
-            File(strippedDir, CONFIG_FILE_NAME).delete()
+        reportFilesMutex.withLock {
+            val cacheDir = File(Application.application.cacheDir, POWER_REPORTS_DIR_NAME)
+            cacheDir.mkdirs()
+            val zipFile = File(cacheDir, if (useAgeEncryption) "${report.id}.zip.age" else "${report.id}.zip")
+            zipFile.delete()
+            val strippedDir = File(cacheDir, report.id)
+            strippedDir.deleteRecursively()
+            report.directory.copyRecursively(strippedDir, overwrite = true)
+            File(strippedDir, READ_MARKER_FILE_NAME).delete()
+            if (!includeConfig) {
+                File(strippedDir, CONFIG_FILE_NAME).delete()
+            }
+            if (!includeLog) {
+                File(strippedDir, GO_LOG_FILE_NAME).delete()
+            }
+            Libbox.createZipArchive(strippedDir.path, zipFile.path, useAgeEncryption)
+            zipFile
         }
-        if (!includeLog) {
-            File(strippedDir, GO_LOG_FILE_NAME).delete()
-        }
-        Libbox.createZipArchive(strippedDir.path, zipFile.path, useAgeEncryption)
-        zipFile
     }
 
     private fun parseTimestamp(name: String): Date? {
@@ -183,9 +193,18 @@ object PowerReportManager {
             name
         }
         return try {
-            timestampFormat.parse(baseName)
+            newTimestampFormat().parse(baseName)
         } catch (_: ParseException) {
             null
         }
+    }
+
+    private fun publishReports(reports: List<PowerReport>) {
+        _reports.value = reports
+        _unreadCount.value = reports.count { !it.isRead }
+    }
+
+    private fun newTimestampFormat() = SimpleDateFormat("yyyy-MM-dd'T'HH-mm-ss", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
     }
 }
