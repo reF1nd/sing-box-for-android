@@ -93,11 +93,16 @@ fun CrashReportDetailScreen(navController: NavController, reportId: String) {
         }
     }
 
-    LaunchedEffect(report) {
-        if (report != null) {
-            files = withContext(Dispatchers.IO) {
+    LaunchedEffect(report?.id) {
+        isLoading = true
+        files = if (report != null) {
+            withContext(Dispatchers.IO) {
                 CrashReportManager.availableFiles(report)
             }
+        } else {
+            emptyList()
+        }
+        if (report != null) {
             CrashReportManager.markAsRead(report)
         }
         isLoading = false
@@ -109,7 +114,7 @@ fun CrashReportDetailScreen(navController: NavController, reportId: String) {
         reportId
     }
 
-    val hasConfig = report != null && CrashReportManager.hasConfigFile(report)
+    val hasConfig = files.any { it.kind == CrashReportFile.Kind.CONFIG }
 
     fun shareReport(includeConfig: Boolean, includeLog: Boolean, useAgeEncryption: Boolean) {
         val currentReport = report ?: return
@@ -279,11 +284,14 @@ fun CrashReportMetadataScreen(navController: NavController, reportId: String) {
     var entries by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
-    LaunchedEffect(report) {
-        if (report != null) {
-            entries = withContext(Dispatchers.IO) {
+    LaunchedEffect(report?.id) {
+        isLoading = true
+        entries = if (report != null) {
+            withContext(Dispatchers.IO) {
                 loadMetadataEntries(report)
             }
+        } else {
+            emptyList()
         }
         isLoading = false
     }
@@ -403,13 +411,17 @@ fun CrashReportFileContentScreen(navController: NavController, reportId: String,
         else -> fileKind
     }
 
-    LaunchedEffect(report, kind) {
-        if (report != null && kind != null) {
-            content = withContext(Dispatchers.IO) {
+    LaunchedEffect(report?.id, kind) {
+        isLoading = true
+        val loadedContent = if (report != null && kind != null) {
+            withContext(Dispatchers.IO) {
                 val file = CrashReportManager.availableFiles(report).find { it.kind == kind }
-                if (file != null) CrashReportManager.loadFileContent(file) else ""
+                file?.let { CrashReportManager.loadFileContent(it) }
             }
+        } else {
+            null
         }
+        content = loadedContent ?: ""
         isLoading = false
     }
 
