@@ -6,6 +6,8 @@ import io.nekohasekai.sfa.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -47,12 +49,10 @@ object CrashReportManager {
     private const val PENDING_JVM_CRASH_FILE_NAME = "CrashReport-JVM.log"
     private const val PENDING_JVM_METADATA_FILE_NAME = "CrashReport-JVM-metadata.json"
 
-    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd'T'HH-mm-ss", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
-
     private lateinit var workingDir: File
     private lateinit var baseDir: File
+    private val reportsMutex = Mutex()
+    private val reportFilesMutex = Mutex()
 
     private val _reports = MutableStateFlow<List<CrashReport>>(emptyList())
     val reports: StateFlow<List<CrashReport>> = _reports
@@ -94,9 +94,9 @@ object CrashReportManager {
     }
 
     suspend fun refresh() = withContext(Dispatchers.IO) {
-        val reports = scanCrashReports()
-        _reports.value = reports
-        _unreadCount.value = reports.count { !it.isRead }
+        reportsMutex.withLock {
+            publishReports(scanCrashReports())
+        }
     }
 
     private fun archivePendingJvmCrashReport() {
@@ -176,53 +176,65 @@ object CrashReportManager {
         return content
     }
 
-    fun markAsRead(report: CrashReport) {
-        File(report.directory, READ_MARKER_FILE_NAME).createNewFile()
-        val updated = _reports.value.map {
-            if (it.id == report.id) it.copy(isRead = true) else it
+    suspend fun markAsRead(report: CrashReport) = withContext(Dispatchers.IO) {
+        reportsMutex.withLock {
+            if (!report.directory.isDirectory) return@withLock
+            val readMarker = File(report.directory, READ_MARKER_FILE_NAME)
+            if (!readMarker.exists()) {
+                readMarker.createNewFile()
+            }
+            if (_reports.value.none { it.id == report.id && !it.isRead }) return@withLock
+            publishReports(
+                _reports.value.map {
+                    if (it.id == report.id) it.copy(isRead = true) else it
+                },
+            )
         }
-        _reports.value = updated
-        _unreadCount.value = updated.count { !it.isRead }
     }
 
     suspend fun delete(report: CrashReport) = withContext(Dispatchers.IO) {
-        report.directory.deleteRecursively()
-        val updated = _reports.value.filter { it.id != report.id }
-        _reports.value = updated
-        _unreadCount.value = updated.count { !it.isRead }
+        reportFilesMutex.withLock {
+            reportsMutex.withLock {
+                report.directory.deleteRecursively()
+                publishReports(_reports.value.filter { it.id != report.id })
+            }
+        }
     }
 
     suspend fun deleteAll() = withContext(Dispatchers.IO) {
-        File(workingDir, CRASH_REPORTS_DIR_NAME).deleteRecursively()
-        _reports.value = emptyList()
-        _unreadCount.value = 0
+        reportFilesMutex.withLock {
+            reportsMutex.withLock {
+                File(workingDir, CRASH_REPORTS_DIR_NAME).deleteRecursively()
+                publishReports(emptyList())
+            }
+        }
     }
 
-    fun hasConfigFile(report: CrashReport): Boolean = File(report.directory, CONFIG_FILE_NAME).exists()
-
     suspend fun createZipArchive(report: CrashReport, includeConfig: Boolean, includeLog: Boolean, useAgeEncryption: Boolean): File = withContext(Dispatchers.IO) {
-        val cacheDir = File(Application.application.cacheDir, CRASH_REPORTS_DIR_NAME)
-        cacheDir.mkdirs()
-        val zipFile = File(cacheDir, if (useAgeEncryption) "${report.id}.zip.age" else "${report.id}.zip")
-        zipFile.delete()
-        val strippedDir = File(cacheDir, report.id)
-        strippedDir.deleteRecursively()
-        report.directory.copyRecursively(strippedDir, overwrite = true)
-        File(strippedDir, READ_MARKER_FILE_NAME).delete()
-        if (!includeConfig) {
-            File(strippedDir, CONFIG_FILE_NAME).delete()
+        reportFilesMutex.withLock {
+            val cacheDir = File(Application.application.cacheDir, CRASH_REPORTS_DIR_NAME)
+            cacheDir.mkdirs()
+            val zipFile = File(cacheDir, if (useAgeEncryption) "${report.id}.zip.age" else "${report.id}.zip")
+            zipFile.delete()
+            val strippedDir = File(cacheDir, report.id)
+            strippedDir.deleteRecursively()
+            report.directory.copyRecursively(strippedDir, overwrite = true)
+            File(strippedDir, READ_MARKER_FILE_NAME).delete()
+            if (!includeConfig) {
+                File(strippedDir, CONFIG_FILE_NAME).delete()
+            }
+            if (!includeLog) {
+                File(strippedDir, GO_LOG_FILE_NAME).delete()
+                File(strippedDir, JVM_LOG_FILE_NAME).delete()
+            }
+            Libbox.createZipArchive(strippedDir.path, zipFile.path, useAgeEncryption)
+            zipFile
         }
-        if (!includeLog) {
-            File(strippedDir, GO_LOG_FILE_NAME).delete()
-            File(strippedDir, JVM_LOG_FILE_NAME).delete()
-        }
-        Libbox.createZipArchive(strippedDir.path, zipFile.path, useAgeEncryption)
-        zipFile
     }
 
     private fun nextAvailableReportDir(date: Date): File {
         val crashReportsDir = File(workingDir, CRASH_REPORTS_DIR_NAME)
-        val baseName = timestampFormat.format(date)
+        val baseName = newTimestampFormat().format(date)
         var index = 0
         while (true) {
             val suffix = if (index == 0) "" else "-$index"
@@ -240,10 +252,19 @@ object CrashReportManager {
             name
         }
         return try {
-            timestampFormat.parse(baseName)
+            newTimestampFormat().parse(baseName)
         } catch (_: ParseException) {
             null
         }
+    }
+
+    private fun publishReports(reports: List<CrashReport>) {
+        _reports.value = reports
+        _unreadCount.value = reports.count { !it.isRead }
+    }
+
+    private fun newTimestampFormat() = SimpleDateFormat("yyyy-MM-dd'T'HH-mm-ss", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
     }
 
     private fun formatTimestampISO8601(date: Date): String {
