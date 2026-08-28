@@ -2,7 +2,9 @@ package io.nekohasekai.sfa.compose
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
@@ -176,6 +178,7 @@ class MainActivity :
     private var newProfileArgs by mutableStateOf(NewProfileArgs())
     private var parseImportLocalProfileJob: Job? = null
     private var pendingIntentErrorMessage by mutableStateOf<String?>(null)
+    private var onSubScreen = false
 
     private val notificationPermissionLauncher =
         registerForActivityResult(
@@ -260,6 +263,36 @@ class MainActivity :
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch {
+            Settings.dataStore.initialize()
+            syncHideFromRecentTasks()
+        }
+    }
+
+    fun syncHideFromRecentTasks() {
+        applyHideFromRecentTasks(Settings.hideFromRecentTasks && !onSubScreen)
+    }
+
+    private fun applyHideFromRecentTasks(hide: Boolean) {
+        runCatching {
+            val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val currentTask = activityManager.appTasks.firstOrNull {
+                val taskInfo = it.taskInfo ?: return@firstOrNull false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    taskInfo.taskId == taskId
+                } else {
+                    @Suppress("DEPRECATION")
+                    taskInfo.id == taskId
+                }
+            }
+            currentTask?.setExcludeFromRecents(hide)
+        }.onFailure {
+            Log.w("MainActivity", "Failed to update recent tasks visibility", it)
+        }
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -961,6 +994,15 @@ class MainActivity :
                     launchSingleTop = true
                 }
                 pendingNavigationRoute.value = null
+            }
+        }
+
+        // An excluded task can be trimmed after switching apps, which destroys the activity,
+        // so only exclude it on top-level pages.
+        LaunchedEffect(currentRoute != null, isSubScreen) {
+            if (currentRoute != null) {
+                onSubScreen = isSubScreen
+                syncHideFromRecentTasks()
             }
         }
 
