@@ -203,6 +203,7 @@
     <string name="disable_deprecated_warnings">غیرفعال‌کردن هشدارهای منسوخ</string>
     <string name="cache_size">اندازه حافظه پنهان</string>
     <string name="clear_cache">پاک‌سازی حافظه پنهان</string>
+    <string name="hide_from_recent_tasks">پنهان‌کردن کارت برنامه در پس‌زمینه</string>
     <string name="notification_settings">اعلان‌ها</string>
     <string name="enable_notification">فعال‌کردن اعلان</string>
     <string name="dynamic_notification">نمایش سرعت بلادرنگ در اعلان</string>

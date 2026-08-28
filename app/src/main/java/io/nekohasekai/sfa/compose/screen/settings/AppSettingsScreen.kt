@@ -95,6 +95,7 @@ import androidx.navigation.NavController
 import io.nekohasekai.sfa.Application
 import io.nekohasekai.sfa.BuildConfig
 import io.nekohasekai.sfa.R
+import io.nekohasekai.sfa.compose.MainActivity
 import io.nekohasekai.sfa.compose.base.UiEvent
 import io.nekohasekai.sfa.compose.base.rememberApplyServiceChangeNotifier
 import io.nekohasekai.sfa.compose.component.UpdateAvailableDialog
@@ -180,6 +181,7 @@ fun AppSettingsScreen(
 
     var cacheSize by remember { mutableStateOf(0L) }
     var cacheSizeText by remember { mutableStateOf("") }
+    var hideFromRecentTasks by remember { mutableStateOf(Settings.hideFromRecentTasks) }
 
     fun refreshCacheSize() {
         scope.launch(Dispatchers.IO) {
@@ -553,6 +555,36 @@ fun AppSettingsScreen(
                     modifier =
                     Modifier
                         .clickable { showLanguageDialog = true },
+                    colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent,
+                    ),
+                )
+
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            stringResource(R.string.hide_from_recent_tasks),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    },
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = hideFromRecentTasks,
+                            onCheckedChange = { checked ->
+                                hideFromRecentTasks = checked
+                                Settings.hideFromRecentTasks = checked
+                                (context as? MainActivity)?.applyHideFromRecentTasks(checked)
+                            },
+                        )
+                    },
                     colors =
                     ListItemDefaults.colors(
                         containerColor = Color.Transparent,
