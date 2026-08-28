@@ -2,12 +2,15 @@ package io.nekohasekai.sfa.compose
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -223,6 +226,29 @@ class MainActivity :
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyHideFromRecentTasks(Settings.hideFromRecentTasks)
+    }
+
+    fun applyHideFromRecentTasks(hide: Boolean) {
+        runCatching {
+            val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val currentTask = activityManager.appTasks.firstOrNull {
+                val taskInfo = it.taskInfo ?: return@firstOrNull false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    taskInfo.taskId == taskId
+                } else {
+                    @Suppress("DEPRECATION")
+                    taskInfo.id == taskId
+                }
+            }
+            currentTask?.setExcludeFromRecents(hide)
+        }.onFailure {
+            Log.w("MainActivity", "Failed to update recent tasks visibility", it)
+        }
     }
 
     private fun handleIntent(intent: Intent?) {

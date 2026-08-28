@@ -200,6 +200,7 @@
     <string name="working_directory">پوشه کاری</string>
     <string name="beta_settings">تنظیمات بتا</string>
     <string name="disable_deprecated_warnings">غیرفعال‌کردن هشدارهای منسوخ</string>
+    <string name="hide_from_recent_tasks">پنهان‌کردن کارت برنامه در پس‌زمینه</string>
     <string name="notification_settings">اعلان‌ها</string>
     <string name="enable_notification">فعال‌کردن اعلان</string>
     <string name="dynamic_notification">نمایش سرعت بلادرنگ در اعلان</string>

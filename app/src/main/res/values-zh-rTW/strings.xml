@@ -202,6 +202,7 @@
     <string name="disable_deprecated_warnings">停用過時警告</string>
     <string name="cache_size">快取大小</string>
     <string name="clear_cache">清除快取</string>
+    <string name="hide_from_recent_tasks">隱藏最近使用的應用程式卡片</string>
     <string name="notification_settings">通知</string>
     <string name="enable_notification">啟用通知</string>
     <string name="dynamic_notification">在通知中顯示即時網速</string>

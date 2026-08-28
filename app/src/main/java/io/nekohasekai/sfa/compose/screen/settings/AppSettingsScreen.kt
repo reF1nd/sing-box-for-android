@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Autorenew
 import androidx.compose.material.icons.outlined.DeleteForever
@@ -86,6 +87,7 @@ import androidx.navigation.NavController
 import io.nekohasekai.sfa.Application
 import io.nekohasekai.sfa.BuildConfig
 import io.nekohasekai.sfa.R
+import io.nekohasekai.sfa.compose.MainActivity
 import io.nekohasekai.sfa.compose.component.UpdateAvailableDialog
 import io.nekohasekai.sfa.compose.topbar.OverrideTopBar
 import io.nekohasekai.sfa.database.Settings
@@ -161,6 +163,7 @@ fun AppSettingsScreen(navController: NavController) {
 
     var cacheSize by remember { mutableStateOf(0L) }
     var cacheSizeText by remember { mutableStateOf("") }
+    var hideFromRecentTasks by remember { mutableStateOf(Settings.hideFromRecentTasks) }
 
     fun refreshCacheSize() {
         scope.launch(Dispatchers.IO) {
@@ -514,6 +517,36 @@ fun AppSettingsScreen(navController: NavController) {
                     modifier =
                     Modifier
                         .clickable { showLanguageDialog = true },
+                    colors =
+                    ListItemDefaults.colors(
+                        containerColor = Color.Transparent,
+                    ),
+                )
+
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            stringResource(R.string.hide_from_recent_tasks),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    },
+                    leadingContent = {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = hideFromRecentTasks,
+                            onCheckedChange = { checked ->
+                                hideFromRecentTasks = checked
+                                Settings.hideFromRecentTasks = checked
+                                (context as? MainActivity)?.applyHideFromRecentTasks(checked)
+                            },
+                        )
+                    },
                     colors =
                     ListItemDefaults.colors(
                         containerColor = Color.Transparent,

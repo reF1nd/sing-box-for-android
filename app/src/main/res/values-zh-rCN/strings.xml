@@ -202,6 +202,7 @@
     <string name="disable_deprecated_warnings">禁用弃用警告</string>
     <string name="cache_size">缓存大小</string>
     <string name="clear_cache">清除缓存</string>
+    <string name="hide_from_recent_tasks">隐藏最近任务卡片</string>
     <string name="notification_settings">通知</string>
     <string name="enable_notification">启用通知</string>
     <string name="dynamic_notification">在通知中显示实时网速</string>

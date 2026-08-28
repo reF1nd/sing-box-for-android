@@ -11,6 +11,7 @@ object SettingsKey {
     const val AUTO_UPDATE_ENABLED = "auto_update_enabled"
     const val DYNAMIC_NOTIFICATION = "dynamic_notification"
     const val DISABLE_DEPRECATED_WARNINGS = "disable_deprecated_warnings"
+    const val HIDE_FROM_RECENT_TASKS = "hide_from_recent_tasks"
 
     const val AUTO_REDIRECT = "auto_redirect"
     const val PER_APP_PROXY_ENABLED = "per_app_proxy_enabled"

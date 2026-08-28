@@ -202,6 +202,7 @@
     <string name="disable_deprecated_warnings">Disable Deprecated Warnings</string>
     <string name="cache_size">Cache Size</string>
     <string name="clear_cache">Clear Cache</string>
+    <string name="hide_from_recent_tasks">Hide background task card</string>
     <string name="notification_settings">Notification</string>
     <string name="enable_notification">Enable Notification</string>
     <string name="dynamic_notification">Display realtime speed in notification</string>
