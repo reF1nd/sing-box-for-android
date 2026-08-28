@@ -203,6 +203,7 @@
     <string name="disable_deprecated_warnings">Отключить предупреждения об устаревании</string>
     <string name="cache_size">Размер кэша</string>
     <string name="clear_cache">Очистить кэш</string>
+    <string name="hide_from_recent_tasks">Скрывать карточку приложения</string>
     <string name="notification_settings">Уведомления</string>
     <string name="enable_notification">Включить уведомления</string>
     <string name="dynamic_notification">Отображать скорость в реальном времени в уведомлении</string>
