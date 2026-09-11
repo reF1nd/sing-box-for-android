@@ -249,6 +249,7 @@ class ConnectionsViewModel : BaseViewModel<ConnectionsUiState, ConnectionsEvent>
         connections: Connections,
         currentState: ConnectionsUiState,
     ): ConnectionLists {
+        connections.filterState(ConnectionStateFilter.All.libboxValue)
         val allConnectionList = connections.iterator().toList()
             .filter { it.outboundType != "dns" }
             .map { Connection.from(it) }
