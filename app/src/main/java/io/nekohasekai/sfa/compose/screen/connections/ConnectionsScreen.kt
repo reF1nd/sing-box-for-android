@@ -341,11 +341,8 @@ fun ConnectionDetailsRoute(
         )
     }
 
-    LaunchedEffect(Unit) {
+    DisposableEffect(viewModel) {
         viewModel.setVisible(true)
-    }
-
-    DisposableEffect(Unit) {
         onDispose {
             viewModel.setVisible(false)
         }
@@ -382,11 +379,8 @@ fun ConnectionsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    LaunchedEffect(Unit) {
+    DisposableEffect(viewModel) {
         viewModel.setVisible(true)
-    }
-
-    DisposableEffect(Unit) {
         onDispose {
             viewModel.setVisible(false)
         }
