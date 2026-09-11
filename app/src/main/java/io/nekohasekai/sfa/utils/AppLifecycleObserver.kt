@@ -20,6 +20,8 @@ object AppLifecycleObserver : DefaultLifecycleObserver {
     private val _isScreenOn = MutableStateFlow(true)
     val isScreenOn: StateFlow<Boolean> = _isScreenOn.asStateFlow()
 
+    private var powerManager: PowerManager? = null
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -30,10 +32,9 @@ object AppLifecycleObserver : DefaultLifecycleObserver {
     }
 
     fun register(context: Context) {
+        powerManager = context.getSystemService<PowerManager>()!!
+        refreshScreenState()
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-
-        val powerManager = context.getSystemService<PowerManager>()!!
-        _isScreenOn.value = powerManager.isInteractive
 
         context.registerReceiver(
             screenReceiver,
@@ -44,7 +45,12 @@ object AppLifecycleObserver : DefaultLifecycleObserver {
         )
     }
 
+    private fun refreshScreenState() {
+        powerManager?.let { _isScreenOn.value = it.isInteractive }
+    }
+
     override fun onStart(owner: LifecycleOwner) {
+        refreshScreenState()
         _isForeground.value = true
     }
 
