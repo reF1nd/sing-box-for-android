@@ -1448,11 +1448,8 @@ class MainActivity :
             }
             val displayConnection = if (selectedConnectionId != null) cachedConnection else null
 
-            LaunchedEffect(Unit) {
+            DisposableEffect(connectionsViewModel) {
                 connectionsViewModel.setVisible(true)
-            }
-
-            DisposableEffect(Unit) {
                 onDispose {
                     connectionsViewModel.setVisible(false)
                 }
