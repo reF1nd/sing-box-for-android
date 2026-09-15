@@ -3,6 +3,7 @@ package io.nekohasekai.sfa.bg
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
@@ -216,6 +217,23 @@ class RootServer : RootService() {
                 bridgeSessions.add(binder)
             }
             return binder
+        }
+
+        override fun createAutoRedirectListener(inet6: Boolean): ParcelFileDescriptor = try {
+            synchronized(autoRedirectLifecycle) {
+                check(!destroyed) { "root service destroyed" }
+                // A returned PFD is closed by Binder after parceling. The app owns
+                // the received copy; root retains no listener/session on failure.
+                // Use the actual Binder caller's full label, including its user/app
+                // categories. Socket ownership remains root for Android's
+                // cross-user loopback check, but SELinux must let the app use it.
+                val socketContext = File("/proc/${Binder.getCallingPid()}/attr/current")
+                    .readText().trim { it <= ' ' }
+                check(socketContext.isNotEmpty()) { "empty caller SELinux context" }
+                ParcelFileDescriptor.adoptFd(Libbox.newAutoRedirectListener(inet6, socketContext))
+            }
+        } catch (e: Exception) {
+            throw IllegalStateException(e.message ?: e.toString())
         }
 
         // Binder only marshals a handful of exception types; a Go error or a
