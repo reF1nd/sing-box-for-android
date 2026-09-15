@@ -327,6 +327,10 @@ interface PlatformInterfaceWrapper : PlatformInterface {
         RootClient.checkRootAvailable()
     }
 
+    override fun createAutoRedirectListener(inet6: Boolean): Int = runBlocking(Dispatchers.IO) {
+        RootClient.createAutoRedirectListener(inet6).use { it.detachFd() }
+    }
+
     override fun createAutoRedirect(options: ByteArray?, handler: AutoRedirectHandler?): AutoRedirectSession {
         options!!
         handler!!

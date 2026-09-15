@@ -2,6 +2,7 @@ package io.nekohasekai.sfa.bg
 
 import android.content.Intent
 import android.content.pm.PackageManager.NameNotFoundException
+import android.net.IpPrefix
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
@@ -16,6 +17,7 @@ import io.nekohasekai.sfa.ktx.toList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.net.InetAddress
 
 class VPNService :
     VpnService(),
@@ -67,7 +69,8 @@ class VPNService :
             builder.setMetered(false)
         }
 
-        if (Settings.allowBypass) {
+        val allowBypass = Settings.allowBypass
+        if (allowBypass) {
             builder.allowBypass()
         }
 
@@ -84,6 +87,24 @@ class VPNService :
         }
 
         if (options.autoRoute) {
+            val routeCompat = VPNRouteCompat(
+                routeBypass = options.androidVPNRouteBypass,
+                allowBypass = allowBypass,
+                hasExcludeRoutes = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    (options.inet4RouteExcludeAddress.hasNext() || options.inet6RouteExcludeAddress.hasNext()),
+            )
+            fun addRoute(address: String, prefix: Int) {
+                routeCompat.addRoute(address, prefix) { routeAddress, routePrefix ->
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        // IpPrefix also preserves the existing normalization of
+                        // route_address entries that contain host bits.
+                        builder.addRoute(IpPrefix(InetAddress.getByName(routeAddress), routePrefix))
+                    } else {
+                        builder.addRoute(routeAddress, routePrefix)
+                    }
+                }
+            }
+
             if (options.dnsMode.value != Libbox.DNSModeDisabled) {
                 val dnsServerAddress = options.dnsServerAddress
                 while (dnsServerAddress.hasNext()) {
@@ -95,19 +116,21 @@ class VPNService :
                 val inet4RouteAddress = options.inet4RouteAddress
                 if (inet4RouteAddress.hasNext()) {
                     while (inet4RouteAddress.hasNext()) {
-                        builder.addRoute(inet4RouteAddress.next().toIpPrefix())
+                        val address = inet4RouteAddress.next()
+                        addRoute(address.address(), address.prefix())
                     }
                 } else if (options.inet4Address.hasNext()) {
-                    builder.addRoute("0.0.0.0", 0)
+                    addRoute("0.0.0.0", 0)
                 }
 
                 val inet6RouteAddress = options.inet6RouteAddress
                 if (inet6RouteAddress.hasNext()) {
                     while (inet6RouteAddress.hasNext()) {
-                        builder.addRoute(inet6RouteAddress.next().toIpPrefix())
+                        val address = inet6RouteAddress.next()
+                        addRoute(address.address(), address.prefix())
                     }
                 } else if (options.inet6Address.hasNext()) {
-                    builder.addRoute("::", 0)
+                    addRoute("::", 0)
                 }
 
                 val inet4RouteExcludeAddress = options.inet4RouteExcludeAddress
@@ -124,7 +147,7 @@ class VPNService :
                 if (inet4RouteAddress.hasNext()) {
                     while (inet4RouteAddress.hasNext()) {
                         val address = inet4RouteAddress.next()
-                        builder.addRoute(address.address(), address.prefix())
+                        addRoute(address.address(), address.prefix())
                     }
                 }
 
@@ -132,7 +155,7 @@ class VPNService :
                 if (inet6RouteAddress.hasNext()) {
                     while (inet6RouteAddress.hasNext()) {
                         val address = inet6RouteAddress.next()
-                        builder.addRoute(address.address(), address.prefix())
+                        addRoute(address.address(), address.prefix())
                     }
                 }
             }

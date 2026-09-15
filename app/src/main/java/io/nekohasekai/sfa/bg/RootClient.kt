@@ -6,6 +6,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import androidx.core.content.ContextCompat
 import com.topjohnwu.superuser.Shell
@@ -180,6 +181,16 @@ object RootClient {
         val svc = bindService()
         try {
             return svc.openBridge(bridgeName, mtu, inet4Port, inet6Port, ruleIndex, routeTable)
+        } catch (e: RemoteException) {
+            throw e.rethrowAsRuntime()
+        }
+    }
+
+    suspend fun createAutoRedirectListener(inet6: Boolean): ParcelFileDescriptor {
+        val svc = bindService()
+        try {
+            return svc.createAutoRedirectListener(inet6)
+                ?: throw IOException("no redirect listener")
         } catch (e: RemoteException) {
             throw e.rethrowAsRuntime()
         }
