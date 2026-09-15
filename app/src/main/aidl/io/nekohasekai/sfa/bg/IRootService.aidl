@@ -28,4 +28,6 @@ interface IRootService {
     IBridgeSession openBridge(String bridgeName, int mtu, String inet4Port, String inet6Port, int ruleIndex, int routeTable) = 8;
 
     IAutoRedirectSession startAutoRedirect(in byte[] options, IAutoRedirectHandler handler) = 9;
+
+    ParcelFileDescriptor createAutoRedirectListener(boolean inet6) = 10;
 }
