@@ -990,8 +990,10 @@ class MainActivity :
             }
 
         val pendingRoute = pendingNavigationRoute.value
-        LaunchedEffect(pendingRoute) {
-            if (pendingRoute != null) {
+        val navigationReady = navBackStackEntry != null
+        LaunchedEffect(pendingRoute, navigationReady) {
+            // NavHost is composed inside Scaffold and may not have installed its graph yet.
+            if (pendingRoute != null && navigationReady) {
                 navController.navigate(pendingRoute) {
                     launchSingleTop = true
                 }
