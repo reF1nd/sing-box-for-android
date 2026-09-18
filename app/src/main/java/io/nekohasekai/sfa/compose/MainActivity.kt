@@ -988,8 +988,10 @@ class MainActivity :
             }
 
         val pendingRoute = pendingNavigationRoute.value
-        LaunchedEffect(pendingRoute) {
-            if (pendingRoute != null) {
+        val navigationReady = navBackStackEntry != null
+        LaunchedEffect(pendingRoute, navigationReady) {
+            // NavHost is composed inside Scaffold and may not have installed its graph yet.
+            if (pendingRoute != null && navigationReady) {
                 navController.navigate(pendingRoute) {
                     launchSingleTop = true
                 }
@@ -999,8 +1001,8 @@ class MainActivity :
 
         // An excluded task can be trimmed after switching apps, which destroys the activity,
         // so only exclude it on top-level pages.
-        LaunchedEffect(currentRoute != null, isSubScreen) {
-            if (currentRoute != null) {
+        LaunchedEffect(navigationReady, isSubScreen) {
+            if (navigationReady) {
                 onSubScreen = isSubScreen
                 syncHideFromRecentTasks()
             }
