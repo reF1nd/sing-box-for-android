@@ -242,7 +242,7 @@ class DashboardViewModel :
 
     fun toggleService() {
         when (currentState.serviceStatus) {
-            Status.Started -> {
+            Status.Started, Status.Starting -> {
                 pendingToggle = false
                 stopService()
             }
@@ -250,7 +250,7 @@ class DashboardViewModel :
                 pendingToggle = false
                 sendGlobalEvent(UiEvent.RequestStartService)
             }
-            Status.Starting, Status.Stopping -> {
+            Status.Stopping -> {
                 pendingToggle = !pendingToggle
             }
         }
