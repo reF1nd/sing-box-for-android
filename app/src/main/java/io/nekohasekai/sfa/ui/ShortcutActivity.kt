@@ -72,7 +72,7 @@ class ShortcutActivity :
 
     override fun onServiceStatusChanged(status: Status) {
         when (status) {
-            Status.Started -> BoxService.stop()
+            Status.Starting, Status.Started -> BoxService.stop()
             Status.Stopped -> BoxService.start()
             else -> {}
         }
