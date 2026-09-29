@@ -36,14 +36,20 @@ import io.nekohasekai.sfa.database.ProfileManager
 import io.nekohasekai.sfa.database.Settings
 import io.nekohasekai.sfa.ktx.hasPermission
 import io.nekohasekai.sfa.vendor.Vendor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -53,6 +59,9 @@ class BoxService(private val service: Service, private val platformInterface: Pl
     companion object {
         private const val PROFILE_UPDATE_INTERVAL = 15L * 60 * 1000 // 15 minutes in milliseconds
         private const val TAG = "BoxService"
+
+        @Volatile
+        private var activeService: BoxService? = null
 
         @OptIn(DelicateCoroutinesApi::class)
         fun start() = GlobalScope.launch(Dispatchers.Main.immediate) {
@@ -71,11 +80,11 @@ class BoxService(private val service: Service, private val platformInterface: Pl
 
         suspend fun stopAndWait() {
             val commandSocket = File(Application.application.filesDir, "command.sock")
-            if (!commandSocket.exists()) return
+            if (activeService == null && !commandSocket.exists()) return
             stop()
             repeat(20) {
                 delay(100)
-                if (!commandSocket.exists()) return
+                if (activeService == null && !commandSocket.exists()) return
             }
             error(Application.application.getString(R.string.error_stop_vpn_timeout))
         }
@@ -86,13 +95,26 @@ class BoxService(private val service: Service, private val platformInterface: Pl
     private val status = MutableLiveData(Status.Stopped)
     private val binder = ServiceBinder(status)
     private val notification = ServiceNotification(status, service)
-    private lateinit var commandServer: CommandServer
+    private var commandServerInstance: CommandServer? = null
+    private val commandServer: CommandServer
+        get() = checkNotNull(commandServerInstance)
+
+    @Volatile
+    private var commandServerReady = false
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val startup = ServiceStartTask(serviceScope)
+    private var stopJob: Job? = null
+    private var shutdownComplete = false
+    private var destroyed = false
     private val idleModeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val idleModeUpdates = Channel<Boolean>(Channel.UNLIMITED)
 
     init {
         idleModeScope.launch {
             for (idle in idleModeUpdates) {
+                if (!commandServerReady) continue
+                val commandServer = commandServerInstance ?: continue
                 if (idle) {
                     commandServer.pause()
                 } else {
@@ -120,22 +142,24 @@ class BoxService(private val service: Service, private val platformInterface: Pl
             }
         }
 
-    private fun startCommandServer() {
+    private suspend fun startCommandServer() {
+        currentCoroutineContext().ensureActive()
         Libbox.promoteOOMDraft()
         Libbox.discardPowerReportDraft()
+        currentCoroutineContext().ensureActive()
         val commandServer = CommandServer(this, platformInterface)
+        // Retain ownership even if start() fails or finishes after cancellation.
+        commandServerInstance = commandServer
+        currentCoroutineContext().ensureActive()
         commandServer.start()
-        this.commandServer = commandServer
+        currentCoroutineContext().ensureActive()
+        commandServerReady = true
     }
 
     private var lastProfileName = ""
 
     private suspend fun startService() {
         try {
-            withContext(Dispatchers.Main) {
-                notification.show(lastProfileName, R.string.status_starting)
-            }
-
             val selectedProfileId = Settings.selectedProfile
             if (selectedProfileId == -1L) {
                 stopAndAlert(Alert.EmptyConfiguration)
@@ -149,6 +173,7 @@ class BoxService(private val service: Service, private val platformInterface: Pl
             }
 
             val content = File(profile.typed.path).readText()
+            currentCoroutineContext().ensureActive()
             if (content.isBlank()) {
                 stopAndAlert(Alert.EmptyConfiguration)
                 return
@@ -160,6 +185,7 @@ class BoxService(private val service: Service, private val platformInterface: Pl
             }
 
             DefaultNetworkMonitor.start()
+            currentCoroutineContext().ensureActive()
 
             try {
                 commandServer.startOrReloadService(
@@ -178,11 +204,15 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                         }
                     },
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                currentCoroutineContext().ensureActive()
                 stopAndAlert(Alert.CreateService, e.message)
                 return
             }
 
+            currentCoroutineContext().ensureActive()
             if (commandServer.needWIFIState()) {
                 val wifiPermission =
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -196,12 +226,15 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 }
             }
 
-            status.postValue(Status.Started)
+            notification.start()
             withContext(Dispatchers.Main) {
+                status.value = Status.Started
                 notification.show(lastProfileName, R.string.status_started)
             }
-            notification.start()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
             stopAndAlert(Alert.StartService, e.message)
             return
         }
@@ -292,44 +325,17 @@ class BoxService(private val service: Service, private val platformInterface: Pl
 
     @RequiresApi(Build.VERSION_CODES.M)
     private fun serviceUpdateIdleMode() {
-        if (::commandServer.isInitialized) {
+        if (commandServerReady) {
             idleModeUpdates.trySend(Application.powerManager.isDeviceIdleMode)
         }
     }
 
-    @OptIn(DelicateCoroutinesApi::class)
     private fun stopService() {
-        if (status.value != Status.Started) return
-        status.value = Status.Stopping
-        if (receiverRegistered) {
-            service.unregisterReceiver(receiver)
-            receiverRegistered = false
-        }
-        notification.close()
-        GlobalScope.launch(Dispatchers.IO) {
-            val pfd = fileDescriptor
-            if (pfd != null) {
-                pfd.close()
-                fileDescriptor = null
-            }
-            DefaultNetworkMonitor.stop()
-            closeService()
-            commandServer.apply {
-                close()
-//                Seq.destroyRef(refnum)
-            }
-            Libbox.discardPowerReportDraft()
-            PowerReportManager.refresh()
-            Settings.startedByUser = false
-            Settings.dataStore.flush()
-            withContext(Dispatchers.Main) {
-                status.value = Status.Stopped
-                service.stopSelf()
-            }
-        }
+        requestStop()
     }
 
     private fun closeService() {
+        val commandServer = commandServerInstance ?: return
         runCatching {
             commandServer.closeService()
         }.onFailure {
@@ -337,38 +343,110 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         }
     }
 
-    private suspend fun stopAndAlert(type: Alert, message: String? = null) {
-        Settings.startedByUser = false
-        Settings.dataStore.flush()
-        val pfd = fileDescriptor
-        if (pfd != null) {
-            pfd.close()
-            fileDescriptor = null
-        }
-        DefaultNetworkMonitor.stop()
-        if (::commandServer.isInitialized) {
-            closeService()
-            commandServer.close()
-        }
-        withContext(Dispatchers.Main) {
+    private fun stopAndAlert(type: Alert, message: String? = null) {
+        requestStop(type, message)
+    }
+
+    private fun requestStop(type: Alert? = null, message: String? = null, clearStartedByUser: Boolean = true) {
+        serviceScope.launch(Dispatchers.Main.immediate) {
+            if (stopJob?.isActive == true) return@launch
+            if (!destroyed && status.value == Status.Stopped && type == null) return@launch
+            status.value = Status.Stopping
+            val startupJob = if (destroyed) startup.destroy() else startup.cancel()
             if (receiverRegistered) {
                 service.unregisterReceiver(receiver)
                 receiverRegistered = false
             }
             notification.close()
-            binder.broadcast { callback ->
-                callback.onServiceAlert(type.ordinal, message)
+            if (type != null && !destroyed) {
+                binder.broadcast { callback ->
+                    callback.onServiceAlert(type.ordinal, message)
+                }
             }
-            status.value = Status.Stopped
-            service.stopSelf()
+            // Native calls are not cancellable. Wait for the startup job to
+            // return before closing any resources it may still be creating.
+            stopJob = serviceScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    startupJob?.join()
+                    releaseResources()
+                    if (clearStartedByUser) {
+                        cleanup("persist service stop") {
+                            Settings.startedByUser = false
+                            Settings.dataStore.flush()
+                        }
+                    }
+                } finally {
+                    withContext(NonCancellable + Dispatchers.Main.immediate) {
+                        shutdownComplete = true
+                        stopJob = null
+                        notification.close()
+                        if (activeService === this@BoxService) activeService = null
+                        if (!destroyed) {
+                            status.value = Status.Stopped
+                            service.stopSelf()
+                        } else {
+                            serviceScope.cancel()
+                        }
+                    }
+                }
+            }
+            stopJob?.start()
         }
     }
 
-    @OptIn(DelicateCoroutinesApi::class)
+    private suspend fun releaseResources() {
+        commandServerReady = false
+        val pfd = fileDescriptor
+        fileDescriptor = null
+        cleanup("close TUN") { pfd?.close() }
+        val server = commandServerInstance
+        if (server != null) {
+            cleanup("stop network monitor") { DefaultNetworkMonitor.stop() }
+            cleanup("close core service") { server.closeService() }
+            cleanup("close command server") { server.close() }
+            commandServerInstance = null
+            cleanup("discard power report draft") { Libbox.discardPowerReportDraft() }
+            cleanup("refresh power reports") { PowerReportManager.refresh() }
+        }
+    }
+
+    private suspend fun cleanup(name: String, block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, name, e)
+        }
+    }
+
     @Suppress("SameReturnValue")
     internal fun onStartCommand(): Int {
+        if (destroyed) {
+            service.stopSelf()
+            return Service.START_NOT_STICKY
+        }
+
+        // Promote before dispatching any initialization or command-server I/O.
+        // Repeated starts during shutdown also carry a foreground obligation.
+        try {
+            notification.show(
+                lastProfileName,
+                when (status.value) {
+                    Status.Started -> R.string.status_started
+                    Status.Stopping -> R.string.status_stopping
+                    else -> R.string.status_starting
+                },
+            )
+        } catch (e: Exception) {
+            stopAndAlert(Alert.StartService, e.message)
+            service.stopSelf()
+            return Service.START_NOT_STICKY
+        }
         if (status.value != Status.Stopped) return Service.START_NOT_STICKY
         status.value = Status.Starting
+        shutdownComplete = false
+        activeService = this
 
         if (!receiverRegistered) {
             ContextCompat.registerReceiver(
@@ -385,24 +463,46 @@ class BoxService(private val service: Service, private val platformInterface: Pl
             receiverRegistered = true
         }
 
-        GlobalScope.launch(Dispatchers.IO) {
-            Settings.startedByUser = true
-            try {
-                startCommandServer()
-            } catch (e: Exception) {
-                stopAndAlert(Alert.StartCommandServer, e.message)
-                return@launch
-            }
-            startService()
-        }
+        startup.start(
+            initialize = { Application.application.awaitLibboxInitialization() },
+            startService = {
+                Settings.startedByUser = true
+                try {
+                    startCommandServer()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    stopAndAlert(Alert.StartCommandServer, e.message)
+                    return@start
+                }
+                startService()
+            },
+            onFailure = { stopAndAlert(Alert.StartService, it.message) },
+        )
         return Service.START_NOT_STICKY
     }
 
     internal fun onBind(): IBinder = binder
 
     internal fun onDestroy() {
+        val wasRunning = status.value != Status.Stopped || commandServerInstance != null
+        destroyed = true
+        startup.destroy()
         idleModeUpdates.cancel()
         idleModeScope.cancel()
+        if (receiverRegistered) {
+            service.unregisterReceiver(receiver)
+            receiverRegistered = false
+        }
+        notification.close()
+        if (shutdownComplete || !wasRunning) {
+            if (activeService === this) activeService = null
+            serviceScope.cancel()
+        } else {
+            // Destruction alone must not disable the user's boot-start setting.
+            requestStop(clearStartedByUser = false)
+        }
         binder.close()
     }
 

@@ -26,9 +26,12 @@ import io.nekohasekai.sfa.utils.AppLifecycleObserver
 import io.nekohasekai.sfa.utils.HookModuleUpdateNotifier
 import io.nekohasekai.sfa.utils.HookStatusClient
 import io.nekohasekai.sfa.utils.PrivilegeSettingsClient
+import io.nekohasekai.sfa.utils.RetryableInitialization
 import io.nekohasekai.sfa.vendor.Vendor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
@@ -36,6 +39,13 @@ import java.util.Locale
 import io.nekohasekai.sfa.Application as BoxApplication
 
 class Application : Application() {
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val libboxInitialization = RetryableInitialization(backgroundScope) { initializeLibbox() }
+
+    @Volatile
+    internal var reportsInstalled = false
+        private set
+
     override fun attachBaseContext(base: Context?) {
         super.attachBaseContext(base)
         application = this
@@ -58,22 +68,23 @@ class Application : Application() {
         val tempDir = cacheDir
         tempDir.mkdirs()
         if (workingDir != null) {
-            workingDir.mkdirs()
-            CrashReportManager.install(workingDir, baseDir)
-            OOMReportManager.install(workingDir)
-            PowerReportManager.install(workingDir)
+            runCatching { installReports(baseDir, workingDir) }.onFailure {
+                Log.e("Application", "install reports", it)
+            }
         }
 
-        @Suppress("OPT_IN_USAGE")
-        GlobalScope.launch(Dispatchers.IO) {
+        launchStartupTask("initialize libbox") { awaitLibboxInitialization() }
+        launchStartupTask("sync hook settings") {
             Settings.dataStore.initialize()
             HookStatusClient.register(this@Application)
             PrivilegeSettingsClient.register(this@Application)
-            initialize(baseDir, workingDir, tempDir)
-            UpdateProfileWork.reconfigureUpdater()
             HookModuleUpdateNotifier.sync(this@Application)
-            TaildropFiles.cleanCache()
         }
+        launchStartupTask("configure profile updates") {
+            Settings.dataStore.initialize()
+            UpdateProfileWork.reconfigureUpdater()
+        }
+        launchStartupTask("clean Taildrop cache") { TaildropFiles.cleanCache() }
 
         if (Vendor.isPerAppProxyAvailable()) {
             registerReceiver(
@@ -87,9 +98,38 @@ class Application : Application() {
         }
     }
 
-    private fun initialize(baseDir: File, workingDir: File?, tempDir: File) {
-        val actualWorkingDir = workingDir ?: return
-        setupLibbox(baseDir, actualWorkingDir, tempDir)
+    private fun launchStartupTask(name: String, block: suspend () -> Unit) {
+        backgroundScope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("Application", name, e)
+            }
+        }
+    }
+
+    suspend fun awaitLibboxInitialization() = libboxInitialization.await(30_000)
+
+    private suspend fun initializeLibbox() {
+        Settings.dataStore.initialize()
+        // Resolve paths on every attempt: external storage can become available
+        // after the application was created during boot.
+        val baseDir = filesDir.apply { mkdirs() }
+        val workingDir = checkNotNull(getExternalFilesDir(null)) { "External files directory is unavailable" }
+        val tempDir = cacheDir.apply { mkdirs() }
+        installReports(baseDir, workingDir)
+        setupLibbox(baseDir, workingDir, tempDir)
+    }
+
+    private fun installReports(baseDir: File, workingDir: File) {
+        if (reportsInstalled) return
+        workingDir.mkdirs()
+        CrashReportManager.install(workingDir, baseDir)
+        OOMReportManager.install(workingDir)
+        PowerReportManager.install(workingDir)
+        reportsInstalled = true
     }
 
     fun reloadSetupOptions() {
