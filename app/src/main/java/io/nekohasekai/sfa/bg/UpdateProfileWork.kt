@@ -14,6 +14,7 @@ import io.nekohasekai.sfa.database.ProfileManager
 import io.nekohasekai.sfa.database.Settings
 import io.nekohasekai.sfa.database.TypedProfile
 import io.nekohasekai.sfa.utils.HTTPClient
+import kotlinx.coroutines.CancellationException
 import java.io.File
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -61,6 +62,14 @@ class UpdateProfileWork {
 
     class UpdateTask(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
         override suspend fun doWork(): Result {
+            try {
+                Application.application.awaitLibboxInitialization()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "initialize core for profile update", e)
+                return Result.retry()
+            }
             var selectedProfileUpdated = false
             val remoteProfiles =
                 ProfileManager.list()
