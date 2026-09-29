@@ -3,6 +3,8 @@ package io.nekohasekai.sfa.bg
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
+import io.nekohasekai.sfa.Application
 import io.nekohasekai.sfa.database.Settings
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +25,9 @@ class BootReceiver : BroadcastReceiver() {
         GlobalScope.launch(Dispatchers.IO) {
             try {
                 if (Settings.startedByUser) {
+                    // Keep the crash-loop guard conservative when storage is
+                    // temporarily unavailable. A manual start can retry setup.
+                    if (!Application.application.reportsInstalled) return@launch
                     CrashReportManager.refresh()
                     if (CrashReportManager.unreadCount.value > 0) {
                         Settings.startedByUser = false
@@ -32,9 +37,16 @@ class BootReceiver : BroadcastReceiver() {
                         BoxService.start().join()
                     }
                 }
+            } catch (e: Exception) {
+                Log.e("BootReceiver", "auto-start", e)
             } finally {
-                Settings.dataStore.flush()
-                pendingResult.finish()
+                try {
+                    Settings.dataStore.flush()
+                } catch (e: Exception) {
+                    Log.e("BootReceiver", "flush settings", e)
+                } finally {
+                    pendingResult.finish()
+                }
             }
         }
     }
