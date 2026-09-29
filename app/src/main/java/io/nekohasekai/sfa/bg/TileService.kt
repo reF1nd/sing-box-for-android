@@ -17,7 +17,7 @@ class TileService :
         qsTile?.apply {
             state =
                 when (status) {
-                    Status.Started -> Tile.STATE_ACTIVE
+                    Status.Started, Status.Starting -> Tile.STATE_ACTIVE
                     Status.Stopped -> Tile.STATE_INACTIVE
                     else -> Tile.STATE_UNAVAILABLE
                 }
@@ -49,7 +49,7 @@ class TileService :
     private fun toggleService() {
         when (connection.status) {
             Status.Stopped -> BoxService.start()
-            Status.Started -> BoxService.stop()
+            Status.Started, Status.Starting -> BoxService.stop()
             else -> {}
         }
     }
