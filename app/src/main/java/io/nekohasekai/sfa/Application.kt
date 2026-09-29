@@ -26,21 +26,25 @@ import io.nekohasekai.sfa.utils.AppLifecycleObserver
 import io.nekohasekai.sfa.utils.HookModuleUpdateNotifier
 import io.nekohasekai.sfa.utils.HookStatusClient
 import io.nekohasekai.sfa.utils.PrivilegeSettingsClient
+import io.nekohasekai.sfa.utils.RetryableInitialization
 import io.nekohasekai.sfa.vendor.Vendor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 import io.nekohasekai.sfa.Application as BoxApplication
 
 class Application : Application() {
-    private val setupAccess = Mutex()
-    private var workingDir: File? = null
-    private var setupCompleted = false
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val libboxInitialization = RetryableInitialization(backgroundScope) { initializeLibbox() }
+
+    @Volatile
+    internal var reportsInstalled = false
+        private set
 
     override fun attachBaseContext(base: Context?) {
         super.attachBaseContext(base)
@@ -58,24 +62,29 @@ class Application : Application() {
             Log.d("Application", "set locale: ${it.message}")
         }
 
-        filesDir.mkdirs()
-        cacheDir.mkdirs()
-        installWorkingDir()
+        val baseDir = filesDir
+        baseDir.mkdirs()
+        val workingDir = getExternalFilesDir(null)
+        val tempDir = cacheDir
+        tempDir.mkdirs()
+        if (workingDir != null) {
+            runCatching { installReports(baseDir, workingDir) }.onFailure {
+                Log.e("Application", "install reports", it)
+            }
+        }
 
-        @Suppress("OPT_IN_USAGE")
-        GlobalScope.launch(Dispatchers.IO) {
+        launchStartupTask("initialize libbox") { setupLibbox() }
+        launchStartupTask("sync hook settings") {
             Settings.dataStore.initialize()
             HookStatusClient.register(this@Application)
             PrivilegeSettingsClient.register(this@Application)
-            runCatching {
-                setupLibbox()
-            }.onFailure {
-                Log.w("Application", "setup libbox: ${it.message}")
-            }
-            UpdateProfileWork.reconfigureUpdater()
             HookModuleUpdateNotifier.sync(this@Application)
-            TaildropFiles.cleanCache()
         }
+        launchStartupTask("configure profile updates") {
+            Settings.dataStore.initialize()
+            UpdateProfileWork.reconfigureUpdater()
+        }
+        launchStartupTask("clean Taildrop cache") { TaildropFiles.cleanCache() }
 
         if (Vendor.isPerAppProxyAvailable()) {
             registerReceiver(
@@ -89,22 +98,38 @@ class Application : Application() {
         }
     }
 
-    private fun installWorkingDir(): File? {
-        workingDir?.let { return it }
-        val dir = getExternalFilesDir(null) ?: return null
-        dir.mkdirs()
-        CrashReportManager.install(dir, filesDir)
-        OOMReportManager.install(dir)
-        PowerReportManager.install(dir)
-        workingDir = dir
-        return dir
+    private fun launchStartupTask(name: String, block: suspend () -> Unit) {
+        backgroundScope.launch {
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("Application", name, e)
+            }
+        }
     }
 
-    suspend fun setupLibbox() = setupAccess.withLock {
-        if (setupCompleted) return@withLock
-        val dir = installWorkingDir() ?: error("android: external storage unavailable")
-        Libbox.setup(createSetupOptions(filesDir, dir, cacheDir))
-        setupCompleted = true
+    suspend fun setupLibbox() = libboxInitialization.await(30_000)
+
+    private suspend fun initializeLibbox() {
+        Settings.dataStore.initialize()
+        // Resolve paths on every attempt: external storage can become available
+        // after the application was created during boot.
+        val baseDir = filesDir.apply { mkdirs() }
+        val workingDir = checkNotNull(getExternalFilesDir(null)) { "External files directory is unavailable" }
+        val tempDir = cacheDir.apply { mkdirs() }
+        installReports(baseDir, workingDir)
+        Libbox.setup(createSetupOptions(baseDir, workingDir, tempDir))
+    }
+
+    private fun installReports(baseDir: File, workingDir: File) {
+        if (reportsInstalled) return
+        workingDir.mkdirs()
+        CrashReportManager.install(workingDir, baseDir)
+        OOMReportManager.install(workingDir)
+        PowerReportManager.install(workingDir)
+        reportsInstalled = true
     }
 
     fun reloadSetupOptions() {
