@@ -24,8 +24,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONException
 import java.io.File
@@ -306,13 +308,18 @@ class DashboardViewModel :
             return
         }
         BoxService.stop()
-        for (i in 0 until 30) {
-            if (_serviceStatus.value == Status.Stopped) {
-                break
-            }
-            delay(100L)
+        withTimeoutOrNull(3000L) {
+            _serviceStatus.first { it != Status.Started }
         }
-        sendGlobalEvent(UiEvent.RequestStartService)
+        withContext(Dispatchers.Main) {
+            // The service ignores start requests until it has fully stopped,
+            // so defer the restart to the Stopped status update.
+            if (_serviceStatus.value == Status.Stopped) {
+                sendGlobalEvent(UiEvent.RequestStartService)
+            } else {
+                pendingToggle = true
+            }
+        }
     }
 
     fun editProfile(profile: Profile) {
