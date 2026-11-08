@@ -1,10 +1,9 @@
 package io.nekohasekai.sfa.utils
 
 import android.content.Context
-import android.os.BadParcelableException
-import android.os.RemoteException
 import io.nekohasekai.sfa.bg.LogEntry
 import io.nekohasekai.sfa.bg.ParceledListSlice
+import io.nekohasekai.sfa.utils.ConnectivityBinderUtils.TransactResult
 import io.nekohasekai.sfa.xposed.HookStatusKeys
 
 object HookErrorClient {
@@ -27,28 +26,20 @@ object HookErrorClient {
     fun query(context: Context): Result {
         val binder = ConnectivityBinderUtils.getBinder(context)
             ?: return failureResult(Failure.SERVICE_UNAVAILABLE)
-        return ConnectivityBinderUtils.withParcel { data, reply ->
-            data.writeInterfaceToken(HookStatusKeys.DESCRIPTOR)
-            if (!binder.transact(HookStatusKeys.TRANSACTION_GET_ERRORS, data, reply, 0)) {
-                return@withParcel failureResult(Failure.TRANSACTION_FAILED)
-            }
-            try {
-                reply.readException()
-            } catch (e: RemoteException) {
-                return@withParcel failureResult(Failure.REMOTE_ERROR, e.message)
-            }
+        val result = ConnectivityBinderUtils.transact(binder, HookStatusKeys.TRANSACTION_GET_ERRORS) { reply ->
             if (reply.dataAvail() < 4) {
-                return@withParcel failureResult(Failure.PROTOCOL_ERROR, "reply too short: ${reply.dataAvail()}")
+                failureResult(Failure.PROTOCOL_ERROR, "reply too short: ${reply.dataAvail()}")
+            } else {
+                val hasWarnings = reply.readInt() != 0
+                val slice = ParceledListSlice.CREATOR.createFromParcel(reply, LogEntry::class.java.classLoader)
+                @Suppress("UNCHECKED_CAST")
+                Result(logs = slice.list as List<LogEntry>, hasWarnings = hasWarnings)
             }
-            val hasWarnings = reply.readInt() != 0
-            val slice =
-                try {
-                    ParceledListSlice.CREATOR.createFromParcel(reply, LogEntry::class.java.classLoader)
-                } catch (e: BadParcelableException) {
-                    return@withParcel failureResult(Failure.REMOTE_ERROR, e.message)
-                }
-            @Suppress("UNCHECKED_CAST")
-            Result(logs = slice.list as List<LogEntry>, hasWarnings = hasWarnings)
+        }
+        return when (result) {
+            is TransactResult.Success -> result.value
+            TransactResult.NotHandled -> failureResult(Failure.TRANSACTION_FAILED)
+            is TransactResult.Failure -> failureResult(Failure.REMOTE_ERROR, result.error.message)
         }
     }
 }

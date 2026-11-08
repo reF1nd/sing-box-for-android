@@ -1,12 +1,18 @@
 package io.nekohasekai.sfa.xposed
 
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.lang.reflect.Method
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 
 object PrivilegeSettingsStore {
-    private const val SETTINGS_DIR = "/data/system/sing-box"
+    private const val SETTINGS_DIR = "/data/system/sing-box-reF1nd"
+
+    // Shared with upstream SFA by modules older than HookModuleVersion 4. It is imported
+    // into SETTINGS_DIR once and left in place for the upstream module.
+    private const val LEGACY_SETTINGS_DIR = "/data/system/sing-box"
     private const val SETTINGS_FILE = "privilege_settings.conf"
     private const val SETTINGS_VERSION = "1"
 
@@ -18,6 +24,9 @@ object PrivilegeSettingsStore {
     private val getPackageManagerMethod by lazy { appGlobalsClass.getMethod("getPackageManager") }
     private var getPackagesForUidMethod: Method? = null
 
+    // Binder threads may call this concurrently; keep the saved file in step with the
+    // in-memory state and never share the temp file between writers.
+    @Synchronized
     fun update(enabled: Boolean, packages: Set<String>, interfaceRenameEnabled: Boolean, interfacePrefix: String) {
         val newState = State(
             enabled = enabled,
@@ -29,9 +38,12 @@ object PrivilegeSettingsStore {
         writeSettingsFile(newState)
     }
 
+    @Synchronized
     fun loadFromDisk() {
-        val file = File(SETTINGS_DIR, SETTINGS_FILE)
-        if (!file.isFile) return
+        val legacyFile = File(LEGACY_SETTINGS_DIR, SETTINGS_FILE)
+        val file = File(SETTINGS_DIR, SETTINGS_FILE).takeIf { it.isFile }
+            ?: legacyFile.takeIf { it.isFile }
+            ?: return
         try {
             val properties = Properties()
             file.bufferedReader().use(properties::load)
@@ -50,7 +62,10 @@ object PrivilegeSettingsStore {
                     properties.getProperty("prefix") ?: throw IllegalArgumentException("missing prefix"),
                 ),
             )
-            applyState(newState, "restored")
+            applyState(newState, "restored from ${file.path}")
+            if (file == legacyFile) {
+                writeSettingsFile(newState)
+            }
         } catch (e: Throwable) {
             HookErrorStore.e("PrivilegeSettingsStore", "Failed to load privilege settings file", e)
         }
@@ -136,9 +151,22 @@ object PrivilegeSettingsStore {
                 append(packagesLine)
                 append('\n')
             }
-            file.writeText(content)
-            file.setReadable(true, true)
-            file.setWritable(true, true)
+            // Replace the file atomically: a truncated file would be preferred over the
+            // legacy one on the next boot and fail to parse.
+            val tempFile = File(dir, "$SETTINGS_FILE.tmp")
+            try {
+                FileOutputStream(tempFile).use { output ->
+                    output.write(content.toByteArray())
+                    output.fd.sync()
+                }
+                tempFile.setReadable(true, true)
+                tempFile.setWritable(true, true)
+                if (!tempFile.renameTo(file)) {
+                    throw IOException("Failed to rename ${tempFile.path} to ${file.path}")
+                }
+            } finally {
+                tempFile.delete()
+            }
         } catch (e: Throwable) {
             HookErrorStore.e("PrivilegeSettingsStore", "Failed to write privilege settings file", e)
         }
