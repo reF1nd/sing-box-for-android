@@ -1,5 +1,5 @@
 package io.nekohasekai.sfa.xposed
 
 object HookModuleVersion {
-    const val CURRENT = 3
+    const val CURRENT = 4
 }
