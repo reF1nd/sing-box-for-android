@@ -4,10 +4,44 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.os.IBinder
 import android.os.Parcel
+import android.os.RemoteException
 import android.util.Log
+import io.nekohasekai.sfa.xposed.HookStatusKeys
 
 object ConnectivityBinderUtils {
     private const val TAG = "ConnectivityBinderUtils"
+
+    sealed interface TransactResult<out T> {
+        data class Success<T>(val value: T) : TransactResult<T>
+
+        data object NotHandled : TransactResult<Nothing>
+
+        data class Failure(val error: Exception) : TransactResult<Nothing>
+    }
+
+    // The module may be missing, stale, or another build that rejects this caller,
+    // so binder and reply errors must never escape to UI callers.
+    inline fun <T> transact(
+        binder: IBinder,
+        code: Int,
+        writeData: (Parcel) -> Unit = {},
+        readReply: (Parcel) -> T,
+    ): TransactResult<T> = withParcel { data, reply ->
+        try {
+            data.writeInterfaceToken(HookStatusKeys.DESCRIPTOR)
+            writeData(data)
+            if (!binder.transact(code, data, reply, 0)) {
+                TransactResult.NotHandled
+            } else {
+                reply.readException()
+                TransactResult.Success(readReply(reply))
+            }
+        } catch (e: RemoteException) {
+            TransactResult.Failure(e)
+        } catch (e: RuntimeException) {
+            TransactResult.Failure(e)
+        }
+    }
 
     fun getBinder(context: Context): IBinder? {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
