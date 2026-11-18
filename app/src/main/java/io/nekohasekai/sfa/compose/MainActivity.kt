@@ -158,6 +158,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private const val STATE_SHOW_LOCAL_NETWORK_PERMISSION_DIALOG = "show_local_network_permission_dialog"
+
 class MainActivity :
     AppCompatActivity(),
     ServiceConnection.Callback {
@@ -230,11 +232,12 @@ class MainActivity :
         }
         enableEdgeToEdge()
 
-        if (savedInstanceState == null &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN &&
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN &&
             !hasPermission(Manifest.permission.ACCESS_LOCAL_NETWORK)
         ) {
-            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_LOCAL_NETWORK)) {
+            if (savedInstanceState != null) {
+                showLocalNetworkPermissionDialog = savedInstanceState.getBoolean(STATE_SHOW_LOCAL_NETWORK_PERMISSION_DIALOG)
+            } else if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_LOCAL_NETWORK)) {
                 showLocalNetworkPermissionDialog = true
             } else {
                 localNetworkPermissionLauncher.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
@@ -266,6 +269,11 @@ class MainActivity :
                 }
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_SHOW_LOCAL_NETWORK_PERMISSION_DIALOG, showLocalNetworkPermissionDialog)
     }
 
     override fun onNewIntent(intent: Intent) {
