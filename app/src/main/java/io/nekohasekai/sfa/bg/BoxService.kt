@@ -63,14 +63,33 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         @Volatile
         private var activeService: BoxService? = null
 
+        @JvmOverloads
         @OptIn(DelicateCoroutinesApi::class)
-        fun start() = GlobalScope.launch(Dispatchers.Main.immediate) {
-            Settings.dataStore.initialize()
-            withContext(Dispatchers.IO) {
-                Settings.rebuildServiceMode()
-            }
-            val intent = Intent(Application.application, Settings.serviceClass())
-            ContextCompat.startForegroundService(Application.application, intent)
+        fun start(shouldStart: () -> Boolean = { true }) = GlobalScope.launch(Dispatchers.Main.immediate) {
+            runStartForegroundService(
+                prepareStart = {
+                    Settings.dataStore.initialize()
+                    withContext(Dispatchers.IO) {
+                        Settings.rebuildServiceMode()
+                    }
+                },
+                shouldStart = shouldStart,
+                startService = {
+                    val intent = Intent(Application.application, Settings.serviceClass())
+                    ContextCompat.startForegroundService(Application.application, intent)
+                },
+            )
+        }
+
+        internal suspend fun runStartForegroundService(
+            prepareStart: suspend () -> Unit,
+            shouldStart: () -> Boolean,
+            startService: () -> Unit,
+        ): Boolean {
+            prepareStart()
+            if (!shouldStart()) return false
+            startService()
+            return true
         }
 
         fun stop() {

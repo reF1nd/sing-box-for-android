@@ -147,7 +147,21 @@
             <intent-filter>
                 <action android:name="android.intent.action.CREATE_SHORTCUT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.ShortcutToggleActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="@string/action_toggle"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@style/AppTheme.Translucent" />
 
         <service
             android:name=".bg.TileService"
