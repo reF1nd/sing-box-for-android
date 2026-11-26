@@ -7,7 +7,7 @@
         android:shortcutShortLabel="@string/action_toggle">
         <intent
             android:action="android.intent.action.MAIN"
-            android:targetClass="io.nekohasekai.sfa.ui.ShortcutActivity"
+            android:targetClass="io.nekohasekai.sfa.ui.ShortcutToggleActivity"
             android:targetPackage="io.nekohasekai.sfa" />
     </shortcut>
 </shortcuts>
